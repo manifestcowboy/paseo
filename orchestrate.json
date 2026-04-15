@@ -1,0 +1,18 @@
+{
+  "providers": {
+    "impl": "codex/gpt-5.3",
+    "ui": "claude/opus",
+    "research": "codex/gpt-5.4",
+    "planning": "codex/gpt-5.4",
+    "audit": "codex/gpt-5.4"
+  },
+  "preferences": [
+    "UI means styling and layout only — not React logic. React logic is impl work, not UI work.",
+    "Claude Opus is the right choice for anything artistic or human-skill-oriented: copywriting, naming, UX copy, visual design decisions, styling. Codex is the workhorse for everything mechanical.",
+    "For Notion task updates, use opencode/opencode-go/minimax-m2.7.",
+    "For testing, use opencode/opencode-go/minimax-m2.7.",
+    "Do not trust the UI model picker/label when OpenCode Go models are missing from the list.",
+    "With OpenCode Go models, after spawning, verify runtime model with `paseo agent inspect <agent-id>` and confirm Model is opencode-go/minimax-m2.7.",
+    "Whenever you spawn an agent, assign the appropriate persona for the role and attach the relevant GAS and Paseo skills for that agent's task."
+  ]
+}
