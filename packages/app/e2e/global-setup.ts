@@ -309,19 +309,20 @@ export default async function globalSetup() {
   );
   const hasDefaultLocalModelsDir =
     defaultLocalModelsDir.trim().length > 0 && existsSync(defaultLocalModelsDir);
-  const dictationProvider = openAiUsable ? "openai" : "local";
+  const speechProvider = openAiUsable ? "openai" : hasDefaultLocalModelsDir ? "local" : "none";
+  const speechEnabled = speechProvider !== "none";
+  const localModelsDir = speechProvider === "local" ? defaultLocalModelsDir : null;
 
-  if (dictationProvider === "local" && !hasDefaultLocalModelsDir) {
-    throw new Error(
-      "OpenAI key is not usable and local speech models are unavailable at ~/.paseo/models/local-speech. " +
-        "Either provide a valid OPENAI_API_KEY or install local speech models before running app e2e tests.",
+  if (speechProvider === "none") {
+    console.warn(
+      "[e2e] OPENAI_API_KEY is not usable and local speech models are unavailable; " +
+        "continuing app e2e with dictation and voice disabled.",
+    );
+  } else {
+    console.log(
+      `[e2e] Dictation STT provider: ${speechProvider}${openAiUsable ? "" : " (OpenAI probe failed)"}`,
     );
   }
-
-  const localModelsDir = dictationProvider === "local" ? defaultLocalModelsDir : null;
-  console.log(
-    `[e2e] Dictation STT provider: ${dictationProvider}${openAiUsable ? "" : " (OpenAI probe failed)"}`,
-  );
 
   try {
     const relayDir = path.resolve(__dirname, "..", "..", "relay");
@@ -487,15 +488,21 @@ export default async function globalSetup() {
         PASEO_LISTEN: `0.0.0.0:${port}`,
         PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
         PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-        PASEO_DICTATION_ENABLED: openAiUsable ? "1" : "0",
-        PASEO_VOICE_MODE_ENABLED: openAiUsable ? "1" : "0",
-        ...(openAiUsable
+        PASEO_DICTATION_ENABLED: speechEnabled ? "1" : "0",
+        PASEO_VOICE_MODE_ENABLED: speechEnabled ? "1" : "0",
+        ...(speechProvider === "openai"
           ? {
               PASEO_DICTATION_STT_PROVIDER: "openai",
               PASEO_VOICE_STT_PROVIDER: "openai",
               PASEO_VOICE_TTS_PROVIDER: "openai",
             }
-          : {}),
+          : speechProvider === "local"
+            ? {
+                PASEO_DICTATION_STT_PROVIDER: "local",
+                PASEO_VOICE_STT_PROVIDER: "local",
+                PASEO_VOICE_TTS_PROVIDER: "local",
+              }
+            : {}),
         ...(localModelsDir ? { PASEO_LOCAL_MODELS_DIR: localModelsDir } : {}),
         NODE_ENV: "development",
       },
