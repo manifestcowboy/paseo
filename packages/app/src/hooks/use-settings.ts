@@ -6,45 +6,23 @@ export const APP_SETTINGS_KEY = "@paseo:app-settings";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
+import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+
+export type SendBehavior = "interrupt" | "queue";
+
+const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
+
 export interface AppSettings {
-  theme: "dark" | "light" | "auto";
+  theme: ThemeName | "auto";
   manageBuiltInDaemon: boolean;
+  sendBehavior: SendBehavior;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: "auto",
   manageBuiltInDaemon: true,
+  sendBehavior: "interrupt",
 };
-
-function normalizeTheme(value: unknown): AppSettings["theme"] {
-  if (value === "dark" || value === "light" || value === "auto") {
-    return value;
-  }
-  return DEFAULT_APP_SETTINGS.theme;
-}
-
-function sanitizeAppSettings(input: Record<string, unknown>): {
-  settings: AppSettings;
-  changed: boolean;
-} {
-  const normalizedTheme = normalizeTheme(input.theme);
-  const normalizedManageBuiltInDaemon =
-    typeof input.manageBuiltInDaemon === "boolean"
-      ? input.manageBuiltInDaemon
-      : DEFAULT_APP_SETTINGS.manageBuiltInDaemon;
-
-  const settings: AppSettings = {
-    theme: normalizedTheme,
-    manageBuiltInDaemon: normalizedManageBuiltInDaemon,
-  };
-
-  const changed =
-    input.theme !== undefined
-      ? input.theme !== normalizedTheme || typeof input.manageBuiltInDaemon !== "boolean"
-      : typeof input.manageBuiltInDaemon !== "boolean" && input.manageBuiltInDaemon !== undefined;
-
-  return { settings, changed };
-}
 
 export interface UseAppSettingsReturn {
   settings: AppSettings;
@@ -68,7 +46,7 @@ export function useAppSettings(): UseAppSettingsReturn {
       try {
         const prev =
           queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_APP_SETTINGS;
-        const { settings: next } = sanitizeAppSettings({ ...prev, ...updates });
+        const next = { ...prev, ...updates };
         queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
         await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
       } catch (err) {
@@ -103,12 +81,11 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
   try {
     const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored) as Record<string, unknown>;
-      const { settings, changed } = sanitizeAppSettings(parsed);
-      if (changed) {
-        await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(settings));
+      const parsed = JSON.parse(stored) as Partial<AppSettings>;
+      if (parsed.theme && !VALID_THEMES.has(parsed.theme)) {
+        parsed.theme = DEFAULT_APP_SETTINGS.theme;
       }
-      return settings;
+      return { ...DEFAULT_APP_SETTINGS, ...parsed };
     }
 
     const legacyStored = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);

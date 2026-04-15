@@ -1313,7 +1313,7 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   removeImageButtonVisible: {
     opacity: 1,
-    ...(IS_WEB
+    ...(isWeb
       ? {
           transform: [{ scale: 1 }],
         }

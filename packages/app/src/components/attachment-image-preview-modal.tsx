@@ -91,7 +91,9 @@ export function AttachmentImagePreviewModal({
     return null;
   }
 
-  const content: ReactNode = <PreviewFrame imageUri={imageUri} fileName={fileName} onClose={onClose} />;
+  const content: ReactNode = (
+    <PreviewFrame imageUri={imageUri} fileName={fileName} onClose={onClose} />
+  );
 
   if (Platform.OS === "web" && typeof document !== "undefined") {
     return createPortal(<View style={styles.portalRoot}>{content}</View>, getOverlayRoot());

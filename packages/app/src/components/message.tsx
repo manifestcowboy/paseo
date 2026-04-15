@@ -303,7 +303,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? {
           cursor: "pointer",
         }
