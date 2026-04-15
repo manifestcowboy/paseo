@@ -77,6 +77,7 @@ import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { AttachmentImagePreviewModal } from "@/components/attachment-image-preview-modal";
 
 interface UserMessageProps {
   message: string;
@@ -293,6 +294,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? {
+          cursor: "pointer",
+        }
+      : {}),
   },
   imageThumbnail: {
     width: 48,
@@ -324,6 +330,27 @@ function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAtta
   return <Image source={{ uri }} style={userMessageStylesheet.imageThumbnail} />;
 }
 
+function UserMessageImagePreview({
+  image,
+  visible,
+  onClose,
+}: {
+  image: UserMessageImageAttachment | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const uri = useAttachmentPreviewUrl(image);
+
+  return (
+    <AttachmentImagePreviewModal
+      visible={visible}
+      imageUri={uri}
+      fileName={image?.fileName ?? null}
+      onClose={onClose}
+    />
+  );
+}
+
 export const UserMessage = memo(function UserMessage({
   message,
   images = [],
@@ -334,10 +361,13 @@ export const UserMessage = memo(function UserMessage({
 }: UserMessageProps) {
   const [messageHovered, setMessageHovered] = useState(false);
   const [copyButtonHovered, setCopyButtonHovered] = useState(false);
+  const [previewedImageIndex, setPreviewedImageIndex] = useState<number | null>(null);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const showCopyButton = hasText && (Platform.OS !== "web" || messageHovered || copyButtonHovered);
+  const previewedImage =
+    previewedImageIndex !== null ? (images[previewedImageIndex] ?? null) : null;
 
   return (
     <View
@@ -355,6 +385,11 @@ export const UserMessage = memo(function UserMessage({
         onHoverIn={Platform.OS === "web" ? () => setMessageHovered(true) : undefined}
         onHoverOut={Platform.OS === "web" ? () => setMessageHovered(false) : undefined}
       >
+        <UserMessageImagePreview
+          image={previewedImage}
+          visible={previewedImage !== null}
+          onClose={() => setPreviewedImageIndex(null)}
+        />
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View
@@ -364,9 +399,14 @@ export const UserMessage = memo(function UserMessage({
               ]}
             >
               {images.map((image, index) => (
-                <View key={`${image.id}-${index}`} style={userMessageStylesheet.imagePill}>
+                <Pressable
+                  key={`${image.id}-${index}`}
+                  accessibilityLabel={`Preview image ${image.fileName ?? index + 1}`}
+                  onPress={() => setPreviewedImageIndex(index)}
+                  style={userMessageStylesheet.imagePill}
+                >
                   <UserMessageAttachmentThumbnail image={image} />
-                </View>
+                </Pressable>
               ))}
             </View>
           ) : null}
