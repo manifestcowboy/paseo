@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { gotoAppShell } from "./app";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 export type TerminalPerfDaemonClient = {
@@ -127,6 +128,8 @@ export async function navigateToTerminal(
   page: Page,
   input: { cwd: string; terminalId: string },
 ): Promise<void> {
+  await gotoAppShell(page);
+
   // Boot the app at the workspace route directly.
   // The fixtures.ts beforeEach addInitScript seeds localStorage on every navigation,
   // so the daemon registry is already configured when the app starts.

@@ -1,5 +1,6 @@
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "./fixtures";
+import { gotoAppShell } from "./helpers/app";
 import {
   archiveWorkspaceFromDaemon,
   archiveLocalWorkspaceFromDaemon,
@@ -56,6 +57,7 @@ test.describe("New workspace flow", () => {
       localWorkspaceIds.add(firstWorkspace.workspaceId);
       localWorkspaceIds.add(secondWorkspace.workspaceId);
 
+      await gotoAppShell(page);
       await page.goto(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId));
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId));
       await expectWorkspaceHeader(page, {
@@ -102,6 +104,7 @@ test.describe("New workspace flow", () => {
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
+      await gotoAppShell(page);
       await page.goto(buildHostWorkspaceRoute(serverId, openedProject.workspaceId));
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, openedProject.workspaceId));
       await expectWorkspaceHeader(page, {

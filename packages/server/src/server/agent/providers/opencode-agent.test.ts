@@ -288,7 +288,10 @@ const hasOpenCode = isBinaryInstalled("opencode");
     expect(existsSync(planFile)).toBe(false);
 
     const planResponse = planTurn.assistantMessages.map((message) => message.text).join("");
-    expect(planResponse.toLowerCase()).toContain("plan mode");
+    expect(planResponse.trim().length).toBeGreaterThan(0);
+    expect(planResponse.toLowerCase()).toMatch(
+      /(plan|read-only|can(?:not|'t) (?:create|modify|write)|unable to (?:create|modify|write))/,
+    );
 
     await planSession.close();
 

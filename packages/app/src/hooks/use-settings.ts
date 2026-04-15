@@ -82,10 +82,16 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
     const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<AppSettings>;
+      let shouldPersist = false;
       if (parsed.theme && !VALID_THEMES.has(parsed.theme)) {
         parsed.theme = DEFAULT_APP_SETTINGS.theme;
+        shouldPersist = true;
       }
-      return { ...DEFAULT_APP_SETTINGS, ...parsed };
+      const next = { ...DEFAULT_APP_SETTINGS, ...parsed };
+      if (shouldPersist) {
+        await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      }
+      return next;
     }
 
     const legacyStored = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);

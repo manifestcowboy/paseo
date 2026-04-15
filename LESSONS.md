@@ -227,9 +227,12 @@ git add -A && git commit && git push origin main
 | `pr-notes/` | PR documentation |
 
 **Files that are safe to take 100% from upstream** (no custom changes):
-- `use-settings.ts` — our validation was redundant; upstream already has `VALID_THEMES` guard
 - `opencode-agent.ts` — we reverted a cherry-pick; upstream's full version is correct
 - `settings-screen.tsx`, `_layout.tsx` — no custom changes
+
+**Correction**:
+- `use-settings.ts` is not automatically safe to take unchanged from upstream anymore.
+- Upstream validation still needs to be checked against our persistence expectations and tests, especially when upstream expands theme options or adds new settings fields.
 
 ---
 
@@ -246,6 +249,58 @@ npm run typecheck   # should now be clean
 ```
 
 **Why**: The server package's `dist/server/server/exports.d.ts` is committed to the repo as a snapshot. When upstream adds exports to `src/server/exports.ts`, the dist snapshot is stale until rebuilt. CI works because it always builds from scratch.
+
+---
+
+## GitHub Failure Notifications Can Be Stale
+
+**Rule**: Before fixing "current CI failures," check the latest completed GitHub Actions run instead of trusting delayed mobile notifications or an earlier summary.
+
+**What went wrong**: The phone notifications said `server-tests` and `cli-tests` were failing. On the latest `main` workflow run, those jobs were already green. The real remaining failures were `app-tests` and `playwright`.
+
+**How to avoid**:
+1. Check the latest workflow run first.
+2. Compare the exact failed jobs on that run against local reproduction.
+3. Treat old notifications as hints, not source of truth.
+
+---
+
+## Upstream Theme Sets Can Invalidate "Invalid Theme" Tests
+
+**Rule**: When testing sanitization logic for persisted enums, use a value that is definitely outside the current upstream enum set.
+
+**What went wrong**: A test used `zinc` as the invalid persisted theme. Upstream now accepts `zinc` as a valid theme, so the test was no longer exercising invalid-value recovery and started failing after sync.
+
+**How to avoid**:
+1. Check the live enum source before picking an "invalid" fixture.
+2. Prefer obviously invalid sentinel values like `sepia` instead of values that might later become valid product options.
+3. If a sanitization test expects persistence, assert both the returned normalized value and the write-back to storage.
+
+---
+
+## Sanitizing Persisted Settings Must Write Back
+
+**Rule**: If settings are repaired on read, persist the repaired value immediately so subsequent loads and tests see the normalized state.
+
+**What went wrong**: `loadSettingsFromStorage()` corrected an invalid persisted theme in memory but did not write the corrected value back to `AsyncStorage`. The app test expected sanitization plus persistence, so it failed after the upstream sync.
+
+**How to avoid**:
+1. When normalizing stored config, track whether repair happened.
+2. If repair happened, persist the normalized object before returning it.
+3. Keep the default object complete so repaired writes include new upstream fields like `sendBehavior`.
+
+---
+
+## Direct-Route Playwright Tests Need a Real Origin First
+
+**Rule**: If an E2E helper touches `localStorage`, navigate to the app origin before calling it. Do not evaluate storage on `about:blank`.
+
+**What went wrong**: The failing workspace and terminal specs deep-linked straight into workspace routes. A first attempt to fix them called the storage seeding helper before any navigation, which threw `SecurityError: Failed to read the 'localStorage' property from 'Window'` because the page was still on `about:blank`.
+
+**How to avoid**:
+1. Reuse `gotoAppShell(page)` or navigate to `/` before any storage-based seeding helper.
+2. Only deep-link after the app origin has been established and the test daemon registry is seeded.
+3. For direct-route specs, separate "boot app shell safely" from "navigate to target route."
 
 ---
 

@@ -66,7 +66,7 @@ describe("use-settings", () => {
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
       if (key === "@paseo:app-settings") {
         return JSON.stringify({
-          theme: "zinc",
+          theme: "sepia",
           manageBuiltInDaemon: true,
         });
       }
@@ -80,12 +80,14 @@ describe("use-settings", () => {
     expect(result).toEqual({
       theme: "auto",
       manageBuiltInDaemon: true,
+      sendBehavior: "interrupt",
     });
     expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
       mod.APP_SETTINGS_KEY,
       JSON.stringify({
         theme: "auto",
         manageBuiltInDaemon: true,
+        sendBehavior: "interrupt",
       }),
     );
   });
