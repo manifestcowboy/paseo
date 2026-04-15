@@ -1,5 +1,4 @@
-import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { promisify } from "node:util";
+import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -10,7 +9,6 @@ import {
   type AgentDefinition,
   type CanUseTool,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
-
   type Options,
   type PermissionMode,
   type PermissionResult,
@@ -35,10 +33,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./claude/task-notification-tool-call.js";
-import {
-  getClaudeModels,
-  normalizeClaudeRuntimeModelId,
-} from "./claude/claude-models.js";
+import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude/claude-models.js";
 import { parsePartialJsonObject } from "./claude/partial-json.js";
 import { ClaudeSidechainTracker } from "./claude/sidechain-tracker.js";
 import {
@@ -76,16 +71,12 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import {
-  applyProviderEnv,
-  type ProviderRuntimeSettings,
-} from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
-import { spawnProcess } from "../../../utils/spawn.js";
+import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { execCommand, spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
-const execFileAsync = promisify(execFile);
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -221,8 +212,7 @@ function applyRuntimeSettingsToClaudeOptions(
       // PATH lookup failures in the managed runtime bundle.
       // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
       // or the user overrides the command via runtime settings, use that directly.
-      const isDefaultRuntime =
-        resolved.command === "node" || resolved.command === "bun";
+      const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
       const command = isDefaultRuntime ? process.execPath : resolved.command;
       const child = spawnProcess(command, resolved.args, {
         cwd: spawnOptions.cwd,
@@ -232,6 +222,10 @@ function applyRuntimeSettingsToClaudeOptions(
         },
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
+        // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
+        // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
+        // The command is always a resolved binary path, so shell routing is unnecessary.
+        shell: false,
       });
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -245,6 +239,10 @@ function applyRuntimeSettingsToClaudeOptions(
 
 function isClaudeThinkingEffort(value: string | null | undefined): value is ClaudeThinkingEffort {
   return value === "low" || value === "medium" || value === "high" || value === "max";
+}
+
+function sanitizeClaudeProjectPath(cwd: string): string {
+  return cwd.replace(/[\\/._:]/g, "-");
 }
 
 type ClaudeOptionsLogSummary = {
@@ -412,7 +410,8 @@ function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
   return normalizeClaudeTranscriptText(value) === NO_RESPONSE_REQUESTED_PLACEHOLDER;
 }
 
-const LOCAL_COMMAND_STDOUT_PATTERN = /^\s*<local-command-stdout>[\s\S]*<\/local-command-stdout>\s*$/;
+const LOCAL_COMMAND_STDOUT_PATTERN =
+  /^\s*<local-command-stdout>[\s\S]*<\/local-command-stdout>\s*$/;
 
 function isClaudeLocalCommandStdout(value: unknown): boolean {
   const normalized = normalizeClaudeTranscriptText(value);
@@ -1103,7 +1102,6 @@ export class ClaudeAgentClient implements AgentClient {
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
     return getClaudeModels();
-
   }
 
   async listPersistedAgents(
@@ -1134,14 +1132,14 @@ export class ClaudeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return fs.existsSync(command.argv[0]);
+      return await isCommandAvailable(command.argv[0]);
     }
     return true;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const resolvedBinary = await findExecutable("claude") ?? "not found";
+      const resolvedBinary = (await findExecutable("claude")) ?? "not found";
       const available = await this.isAvailable();
       const version = await resolveClaudeVersion(this.runtimeSettings);
       let modelsValue = "Not checked";
@@ -1183,16 +1181,18 @@ export class ClaudeAgentClient implements AgentClient {
   }
 }
 
-async function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): Promise<string | null> {
+async function resolveClaudeVersion(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<string | null> {
   const command = runtimeSettings?.command;
 
   try {
     if (command?.mode === "replace") {
-      const { stdout } = await execFileAsync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
-        encoding: "utf8",
-        timeout: 5_000,
-        windowsHide: true,
-      });
+      const { stdout } = await execCommand(
+        command.argv[0]!,
+        [...command.argv.slice(1), "--version"],
+        { timeout: 5_000 },
+      );
       return stdout.trim() || null;
     }
 
@@ -1201,11 +1201,7 @@ async function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): 
       return null;
     }
 
-    const { stdout } = await execFileAsync(executable, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      windowsHide: true,
-    });
+    const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
     return stdout.trim() || null;
   } catch {
     return null;
@@ -1236,9 +1232,7 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readUsageTotalTokens(
-  usage: unknown,
-): number | undefined {
+function readUsageTotalTokens(usage: unknown): number | undefined {
   if (!usage || typeof usage !== "object") {
     return undefined;
   }
@@ -2094,10 +2088,9 @@ class ClaudeAgentSession implements AgentSession {
             : process.env["PATH"] !== undefined
               ? "PATH"
               : null,
-        pathIncludesClaudeLocalBin:
-          (process.env["Path"] ?? process.env["PATH"] ?? "")
-            .toLowerCase()
-            .includes("\\.local\\bin"),
+        pathIncludesClaudeLocalBin: (process.env["Path"] ?? process.env["PATH"] ?? "")
+          .toLowerCase()
+          .includes("\\.local\\bin"),
       },
       "Resolved Claude executable",
     );
@@ -2229,8 +2222,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private isAbortError(message: SDKMessage): boolean {
-    const errors =
-      "errors" in message && Array.isArray(message.errors) ? message.errors : [];
+    const errors = "errors" in message && Array.isArray(message.errors) ? message.errors : [];
     return errors.some((e: string) => /\baborted\b/i.test(e));
   }
 
@@ -2271,9 +2263,11 @@ class ClaudeAgentSession implements AgentSession {
     if (this.getRecentStderrDiagnostic()) {
       return;
     }
-    const message =
-      typeof error === "string" ? error : error instanceof Error ? error.message : "";
-    if (!/\bprocess exited with code\b/i.test(message) && !/\bterminated by signal\b/i.test(message)) {
+    const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    if (
+      !/\bprocess exited with code\b/i.test(message) &&
+      !/\bterminated by signal\b/i.test(message)
+    ) {
       return;
     }
 
@@ -2516,11 +2510,7 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
     }
-    if (
-      message.type === "result" &&
-      message.subtype !== "success" &&
-      this.isAbortError(message)
-    ) {
+    if (message.type === "result" && message.subtype !== "success" && this.isAbortError(message)) {
       this.logger.debug("Suppressing abort result by content");
       return;
     }
@@ -2988,9 +2978,7 @@ class ClaudeAgentSession implements AgentSession {
       outputTokens: message.usage.output_tokens,
       totalCostUsd: message.total_cost_usd,
     };
-    const contextWindowMaxTokens = extractContextWindowSize(
-      modelUsage ?? message.modelUsage,
-    );
+    const contextWindowMaxTokens = extractContextWindowSize(modelUsage ?? message.modelUsage);
     if (contextWindowMaxTokens !== undefined) {
       this.lastContextWindowMaxTokens = contextWindowMaxTokens;
       usage.contextWindowMaxTokens = contextWindowMaxTokens;
@@ -3107,8 +3095,7 @@ class ClaudeAgentSession implements AgentSession {
       input,
       detail: toolDetail,
       suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
-      actions:
-        kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
+      actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
@@ -3277,8 +3264,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    // Match Claude CLI's path sanitization: replace slashes, dots, and underscores with dashes
-    const sanitized = cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
+    const sanitized = sanitizeClaudeProjectPath(cwd);
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);

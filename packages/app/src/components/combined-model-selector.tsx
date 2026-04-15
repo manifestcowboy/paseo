@@ -4,26 +4,17 @@ import {
   Text,
   TextInput,
   Pressable,
-  Platform,
   ActivityIndicator,
   type GestureResponderEvent,
 } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import {
-  ArrowLeft,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Star,
-} from "lucide-react-native";
-import type {
-  AgentModelDefinition,
-  AgentProvider,
-} from "@server/server/agent/agent-sdk-types";
+import { isWeb as platformIsWeb } from "@/constants/platform";
+import { ArrowLeft, ChevronDown, ChevronRight, Search, Star } from "lucide-react-native";
+import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = platformIsWeb;
 
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -127,7 +118,10 @@ function sortFavoritesFirst(
 function groupRowsByProvider(
   rows: SelectorModelRow[],
 ): Array<{ providerId: string; providerLabel: string; rows: SelectorModelRow[] }> {
-  const grouped = new Map<string, { providerId: string; providerLabel: string; rows: SelectorModelRow[] }>();
+  const grouped = new Map<
+    string,
+    { providerId: string; providerLabel: string; rows: SelectorModelRow[] }
+  >();
 
   for (const row of rows) {
     const existing = grouped.get(row.provider);
@@ -174,8 +168,7 @@ function ModelRow({
     [onToggleFavorite, row.modelId, row.provider],
   );
 
-  const showDescription =
-    row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
+  const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
 
   return (
     <ComboboxItem
@@ -292,7 +285,9 @@ function GroupedProviderRows({
   return (
     <View>
       {groupedRows.map((group, index) => {
-        const providerDefinition = providerDefinitions.find((definition) => definition.id === group.providerId);
+        const providerDefinition = providerDefinitions.find(
+          (definition) => definition.id === group.providerId,
+        );
         const ProvIcon = getProviderIcon(group.providerId);
         const isInline = viewKind === "provider";
 
@@ -354,7 +349,7 @@ function ProviderSearchInput({
   const InputComponent = isMobile ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
-    if (autoFocus && Platform.OS === "web" && inputRef.current) {
+    if (autoFocus && platformIsWeb && inputRef.current) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
@@ -368,7 +363,7 @@ function ProviderSearchInput({
       <InputComponent
         ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
-        style={[styles.providerSearchInput, Platform.OS === "web" && { outlineStyle: "none" }]}
+        style={[styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }]}
         placeholder="Search models..."
         placeholderTextColor={theme.colors.foregroundMuted}
         value={value}
@@ -523,10 +518,9 @@ export function CombinedModelSelector({
   disabled = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
-  const isWeb = Platform.OS === "web";
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentReady, setIsContentReady] = useState(isWeb);
+  const [isContentReady, setIsContentReady] = useState(platformIsWeb);
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -596,7 +590,7 @@ export function CombinedModelSelector({
   }, [selectedModelLabel, selectedProviderLabel]);
 
   useEffect(() => {
-    if (isWeb) {
+    if (platformIsWeb) {
       return;
     }
 
@@ -610,7 +604,7 @@ export function CombinedModelSelector({
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [isOpen, isWeb]);
+  }, [isOpen, platformIsWeb]);
 
   return (
     <>
@@ -640,7 +634,9 @@ export function CombinedModelSelector({
         ) : (
           <>
             <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-            <Text style={styles.triggerText}>{triggerLabel}</Text>
+            <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+              {triggerLabel}
+            </Text>
             <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           </>
         )}
@@ -673,7 +669,7 @@ export function CombinedModelSelector({
               <ProviderSearchInput
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                autoFocus={Platform.OS === "web"}
+                autoFocus={platformIsWeb}
               />
             </View>
           ) : undefined
@@ -710,6 +706,8 @@ export function CombinedModelSelector({
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     height: 28,
+    minWidth: 0,
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
@@ -727,6 +725,8 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.5,
   },
   triggerText: {
+    minWidth: 0,
+    flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,

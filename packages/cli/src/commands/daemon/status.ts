@@ -1,14 +1,11 @@
 import type { Command } from "commander";
-import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
-import { promisify } from "node:util";
 import {
   getOrCreateServerId,
   findExecutable,
   applyProviderEnv,
+  execCommand,
 } from "@getpaseo/server";
-
-const execFileAsync = promisify(execFile);
 import { tryConnectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
@@ -173,18 +170,18 @@ const PROVIDER_BINARIES: { label: string; binary: string }[] = [
   { label: "OpenCode", binary: "opencode" },
 ];
 
-async function checkProviderBinary(binary: string): Promise<{ path: string | null; version: string | null }> {
+async function checkProviderBinary(
+  binary: string,
+): Promise<{ path: string | null; version: string | null }> {
   const binaryPath = await findExecutable(binary);
   if (!binaryPath) {
     return { path: null, version: null };
   }
   const env = applyProviderEnv(process.env);
   try {
-    const { stdout } = await execFileAsync(binaryPath, ["--version"], {
-      encoding: "utf8",
+    const { stdout } = await execCommand(binaryPath, ["--version"], {
       timeout: 5000,
       env,
-      windowsHide: true,
     });
     return { path: binaryPath, version: stdout.trim() || null };
   } catch {
@@ -226,7 +223,7 @@ export async function runStatusCommand(
   if (!state.running) {
     daemonNode = "-";
   } else if (state.pidInfo?.pid) {
-    const fromPid = resolveNodePathFromPid(state.pidInfo.pid);
+    const fromPid = await resolveNodePathFromPid(state.pidInfo.pid);
     daemonNode = fromPid.nodePath ?? `unknown (${fromPid.error ?? "could not resolve from PID"})`;
   } else {
     daemonNode = "unknown (no PID available)";

@@ -4,6 +4,7 @@ const CLAUDE_THINKING_OPTIONS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
+  { id: "max", label: "Max" },
 ] as const;
 
 const CLAUDE_MODELS: AgentModelDefinition[] = [
@@ -45,9 +46,7 @@ export function getClaudeModels(): AgentModelDefinition[] {
  * Normalize a runtime model string (from SDK init message) to a known model ID.
  * Handles the `[1m]` suffix that the SDK appends for 1M context sessions.
  */
-export function normalizeClaudeRuntimeModelId(
-  value: string | null | undefined,
-): string | null {
+export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
   const trimmed = typeof value === "string" ? value.trim() : "";
   if (!trimmed) {
     return null;

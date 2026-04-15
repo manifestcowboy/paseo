@@ -3,19 +3,12 @@ import { resolve } from "node:path";
 
 import type { Logger } from "pino";
 
-import type {
-  AgentProvider,
-  ProviderSnapshotEntry,
-} from "./agent-sdk-types.js";
+import type { AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
 
 const DEFAULT_CWD_KEY = "__default__";
 
-type ProviderSnapshotChangeListener = (
-  entries: ProviderSnapshotEntry[],
-  cwd?: string,
-) => void;
+type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd?: string) => void;
 
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();
@@ -69,9 +62,13 @@ export class ProviderSnapshotManager {
   private createLoadingEntries(): Map<AgentProvider, ProviderSnapshotEntry> {
     const entries = new Map<AgentProvider, ProviderSnapshotEntry>();
     for (const provider of this.getProviderIds()) {
+      const definition = this.providerRegistry[provider];
       entries.set(provider, {
         provider,
         status: "loading",
+        label: definition?.label,
+        description: definition?.description,
+        defaultModeId: definition?.defaultModeId ?? null,
       });
     }
     return entries;
@@ -113,6 +110,9 @@ export class ProviderSnapshotManager {
     snapshot.set(provider, {
       provider,
       status: "loading",
+      label: definition.label,
+      description: definition.description,
+      defaultModeId: definition.defaultModeId,
     });
 
     try {
@@ -122,6 +122,9 @@ export class ProviderSnapshotManager {
         snapshot.set(provider, {
           provider,
           status: "unavailable",
+          label: definition.label,
+          description: definition.description,
+          defaultModeId: definition.defaultModeId,
         });
         this.emitChange(cwdKey);
         return;
@@ -138,6 +141,9 @@ export class ProviderSnapshotManager {
         models,
         modes,
         fetchedAt: new Date().toISOString(),
+        label: definition.label,
+        description: definition.description,
+        defaultModeId: definition.defaultModeId,
       });
       this.emitChange(cwdKey);
     } catch (error) {
@@ -145,8 +151,14 @@ export class ProviderSnapshotManager {
         provider,
         status: "error",
         error: toErrorMessage(error),
+        label: definition.label,
+        description: definition.description,
+        defaultModeId: definition.defaultModeId,
       });
-      this.logger.warn({ err: error, provider, cwd: cwdKey }, "Failed to refresh provider snapshot");
+      this.logger.warn(
+        { err: error, provider, cwd: cwdKey },
+        "Failed to refresh provider snapshot",
+      );
       this.emitChange(cwdKey);
     }
   }
@@ -183,7 +195,7 @@ export class ProviderSnapshotManager {
   }
 
   private getProviderIds(): AgentProvider[] {
-    return AGENT_PROVIDER_IDS.filter((provider) => this.providerRegistry[provider]);
+    return Object.keys(this.providerRegistry) as AgentProvider[];
   }
 }
 

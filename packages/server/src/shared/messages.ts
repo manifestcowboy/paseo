@@ -47,6 +47,29 @@ import {
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
 } from "../server/loop/rpc-schemas.js";
+// ---------------------------------------------------------------------------
+// Mutable daemon config schemas (shared between server store and client)
+// ---------------------------------------------------------------------------
+
+export const MutableDaemonConfigSchema = z
+  .object({
+    mcp: z
+      .object({
+        injectIntoAgents: z.boolean(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+export const MutableDaemonConfigPatchSchema = z
+  .object({
+    mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+  })
+  .partial()
+  .passthrough();
+
+export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
+export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
 import type { LiteralUnion } from "./literal-union.js";
 import type {
   AgentCapabilityFlags,
@@ -70,6 +93,8 @@ const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  icon: z.string().optional(),
+  colorTier: z.string().optional(),
 });
 
 const ProviderStatusSchema: z.ZodType<ProviderStatus> = z.enum([
@@ -131,6 +156,9 @@ const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
   models: z.array(AgentModelDefinitionSchema).optional(),
   modes: z.array(AgentModeSchema).optional(),
   fetchedAt: z.string().optional(),
+  label: z.string().optional(),
+  description: z.string().optional(),
+  defaultModeId: z.string().nullable().optional(),
 });
 
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
@@ -725,6 +753,17 @@ export const WaitForFinishRequestSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+export const GetDaemonConfigRequestMessageSchema = z.object({
+  type: z.literal("get_daemon_config_request"),
+  requestId: z.string(),
+});
+
+export const SetDaemonConfigRequestMessageSchema = z.object({
+  type: z.literal("set_daemon_config_request"),
+  requestId: z.string(),
+  config: MutableDaemonConfigPatchSchema,
+});
+
 // ============================================================================
 // Dictation Streaming (lossless, resumable)
 // ============================================================================
@@ -837,6 +876,7 @@ export const RefreshAgentRequestMessageSchema = z.object({
 export const CancelAgentRequestMessageSchema = z.object({
   type: z.literal("cancel_agent_request"),
   agentId: z.string(),
+  requestId: z.string().optional(),
 });
 
 export const RestartServerRequestMessageSchema = z.object({
@@ -1268,6 +1308,7 @@ export const FileDownloadTokenRequestSchema = z.object({
 export const ClearAgentAttentionMessageSchema = z.object({
   type: z.literal("clear_agent_attention"),
   agentId: z.union([z.string(), z.array(z.string())]),
+  requestId: z.string().optional(),
 });
 
 export const ClientHeartbeatMessageSchema = z.object({
@@ -1397,6 +1438,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
+  GetDaemonConfigRequestMessageSchema,
+  SetDaemonConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
@@ -1732,6 +1775,13 @@ export const ShutdownRequestedStatusPayloadSchema = z.object({
   requestId: z.string(),
 });
 
+export const DaemonConfigChangedStatusPayloadSchema = z
+  .object({
+    status: z.literal("daemon_config_changed"),
+    config: MutableDaemonConfigSchema,
+  })
+  .passthrough();
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -1739,6 +1789,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentRefreshedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
+  DaemonConfigChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -1811,6 +1862,50 @@ export const ProjectPlacementPayloadSchema = z.object({
   checkout: ProjectCheckoutLitePayloadSchema,
 });
 
+const WorkspaceGitRuntimePayloadSchema = z
+  .object({
+    currentBranch: z.string().nullable().optional(),
+    remoteUrl: z.string().nullable().optional(),
+    isPaseoOwnedWorktree: z.boolean().optional(),
+    isDirty: z.boolean().nullable().optional(),
+    aheadBehind: z
+      .object({
+        ahead: z.number(),
+        behind: z.number(),
+      })
+      .nullable()
+      .optional(),
+    aheadOfOrigin: z.number().nullable().optional(),
+    behindOfOrigin: z.number().nullable().optional(),
+  })
+  .optional()
+  .nullable();
+
+const WorkspaceGitHubRuntimePayloadSchema = z
+  .object({
+    featuresEnabled: z.boolean().optional(),
+    pullRequest: z
+      .object({
+        url: z.string(),
+        title: z.string(),
+        state: z.string(),
+        baseRefName: z.string(),
+        headRefName: z.string(),
+        isMerged: z.boolean(),
+      })
+      .nullable()
+      .optional(),
+    error: z
+      .object({
+        message: z.string(),
+      })
+      .nullable()
+      .optional(),
+    refreshedAt: z.string().nullable().optional(),
+  })
+  .optional()
+  .nullable();
+
 export const WorkspaceDescriptorPayloadSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -1828,6 +1923,8 @@ export const WorkspaceDescriptorPayloadSchema = z.object({
     })
     .nullable()
     .optional(),
+  gitRuntime: WorkspaceGitRuntimePayloadSchema,
+  githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
 });
 
 export const AgentUpdateMessageSchema = z.object({
@@ -2007,6 +2104,24 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
   }),
 });
 
+export const CancelAgentResponseMessageSchema = z.object({
+  type: z.literal("cancel_agent_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    agent: AgentSnapshotPayloadSchema.nullable(),
+  }),
+});
+
+export const ClearAgentAttentionResponseMessageSchema = z.object({
+  type: z.literal("clear_agent_attention_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string().or(z.array(z.string())),
+    agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
 export const SendAgentMessageResponseMessageSchema = z.object({
   type: z.literal("send_agent_message_response"),
   payload: z.object({
@@ -2026,6 +2141,26 @@ export const WaitForFinishResponseMessageSchema = z.object({
     error: z.string().nullable(),
     lastMessage: z.string().nullable(),
   }),
+});
+
+export const GetDaemonConfigResponseMessageSchema = z.object({
+  type: z.literal("get_daemon_config_response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
+});
+
+export const SetDaemonConfigResponseMessageSchema = z.object({
+  type: z.literal("set_daemon_config_response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
 });
 
 export const AgentPermissionRequestMessageSchema = z.object({
@@ -2656,8 +2791,12 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  CancelAgentResponseMessageSchema,
+  ClearAgentAttentionResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
+  GetDaemonConfigResponseMessageSchema,
+  SetDaemonConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -2766,6 +2905,7 @@ export type FetchAgentResponseMessage = z.infer<typeof FetchAgentResponseMessage
 export type FetchAgentTimelineResponseMessage = z.infer<
   typeof FetchAgentTimelineResponseMessageSchema
 >;
+export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
@@ -2835,9 +2975,7 @@ export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessage
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
 >;
-export type ListProviderModesRequestMessage = z.infer<
-  typeof ListProviderModesRequestMessageSchema
->;
+export type ListProviderModesRequestMessage = z.infer<typeof ListProviderModesRequestMessageSchema>;
 export type ListProviderFeaturesRequestMessage = z.infer<
   typeof ListProviderFeaturesRequestMessageSchema
 >;
@@ -2933,6 +3071,9 @@ export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponse
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ShutdownServerRequestMessage = z.infer<typeof ShutdownServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
+export type ClearAgentAttentionResponseMessage = z.infer<
+  typeof ClearAgentAttentionResponseMessageSchema
+>;
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;

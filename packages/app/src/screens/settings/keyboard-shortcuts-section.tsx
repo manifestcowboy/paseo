@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { View, Text, Platform } from "react-native";
+import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
@@ -20,6 +20,7 @@ import {
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 
 function ShortcutSequence({
   chord,
@@ -81,11 +82,7 @@ function ShortcutRow({
                 Done
               </Button>
             ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
-              onPress={isCapturing ? onCancel : onRebind}
-            >
+            <Button variant="ghost" size="sm" onPress={isCapturing ? onCancel : onRebind}>
               {isCapturing ? "Cancel" : "Rebind"}
             </Button>
           </>
@@ -142,7 +139,7 @@ export function KeyboardShortcutsSection() {
   }
 
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (capturingBindingId === null) return;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -177,14 +174,12 @@ export function KeyboardShortcutsSection() {
     };
   }, [setCapturingShortcut]);
 
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return (
       <View style={settingsStyles.section}>
         <Text style={settingsStyles.sectionTitle}>Shortcuts</Text>
         <View style={[settingsStyles.card, styles.mobileCard]}>
-          <Text style={styles.mobileText}>
-            Keyboard shortcuts are only available on desktop.
-          </Text>
+          <Text style={styles.mobileText}>Keyboard shortcuts are only available on desktop.</Text>
         </View>
       </View>
     );

@@ -44,7 +44,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
-import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
 import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
@@ -53,7 +53,7 @@ import {
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
@@ -83,6 +83,7 @@ import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-
 import { createNameId } from "mnemonic-id";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -100,7 +101,10 @@ const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
-function getWorkspacePrIconColor(theme: ReturnType<typeof useUnistyles>["theme"], state: PrHint["state"]) {
+function getWorkspacePrIconColor(
+  theme: ReturnType<typeof useUnistyles>["theme"],
+  state: PrHint["state"],
+) {
   switch (state) {
     case "merged":
       return theme.colors.palette.purple[500];
@@ -196,21 +200,12 @@ function WorkspacePrBadge({ hint }: { hint: PrHint }) {
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}
-      onPointerEnter={() => setIsHovered(true)}
-      onPointerLeave={() => setIsHovered(false)}
-      style={({ pressed }) => [
-        styles.workspacePrBadge,
-        pressed && styles.workspacePrBadgePressed,
-      ]}
+      onHoverIn={() => setIsHovered(true)}
+      onHoverOut={() => setIsHovered(false)}
+      style={({ pressed }) => [styles.workspacePrBadge, pressed && styles.workspacePrBadgePressed]}
     >
       <GitPullRequest size={12} color={iconColor} />
-      <Text
-        style={[
-          styles.workspacePrBadgeText,
-          { color: textColor },
-        ]}
-        numberOfLines={1}
-      >
+      <Text style={[styles.workspacePrBadgeText, { color: textColor }]} numberOfLines={1}>
         #{hint.number}
       </Text>
       {isHovered && <ExternalLink size={10} color={textColor} />}
@@ -241,7 +236,14 @@ function WorkspaceStatusIndicator({
   if (shouldShowSyncedLoader) {
     return (
       <View style={styles.workspaceStatusDot}>
-        <SyncedLoader size={11} color={theme.colors.palette.amber[500]} />
+        <SyncedLoader
+          size={11}
+          color={
+            theme.colorScheme === "light"
+              ? theme.colors.palette.amber[700]
+              : theme.colors.palette.amber[500]
+          }
+        />
       </View>
     );
   }
@@ -255,11 +257,7 @@ function WorkspaceStatusIndicator({
   }
 
   const KindIcon =
-    workspaceKind === "local_checkout"
-      ? Monitor
-      : workspaceKind === "worktree"
-        ? FolderGit2
-        : null;
+    workspaceKind === "local_checkout" ? Monitor : workspaceKind === "worktree" ? FolderGit2 : null;
   if (!KindIcon) return null;
 
   const dotColor = getStatusDotColor({ theme, bucket, showDoneAsInactive: false });
@@ -349,7 +347,14 @@ function ProjectLeadingVisual({
   if (shouldShowSyncedLoader) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
-        <SyncedLoader size={11} color={theme.colors.palette.amber[500]} />
+        <SyncedLoader
+          size={11}
+          color={
+            theme.colorScheme === "light"
+              ? theme.colors.palette.amber[700]
+              : theme.colors.palette.amber[500]
+          }
+        />
       </View>
     );
   }
@@ -553,7 +558,7 @@ function useLongPressDragInteraction(input: {
       input.drag();
     }, DRAG_ARM_DELAY_MS);
 
-    if (!input.menuController || Platform.OS === "web") {
+    if (!input.menuController || platformIsWeb) {
       return;
     }
 
@@ -803,7 +808,12 @@ function ProjectHeaderRow({
           <NewWorktreeButton
             displayName={displayName}
             onPress={() => createWorktreeMutation.mutate()}
-            visible={isHovered || isMobileBreakpoint}
+            visible={
+              isHovered ||
+              platformIsNative ||
+              isMobileBreakpoint ||
+              createWorktreeMutation.isPending
+            }
             loading={createWorktreeMutation.isPending}
             showShortcutHint={isProjectActive}
             testID={`sidebar-project-new-worktree-${project.projectKey}`}
@@ -811,8 +821,11 @@ function ProjectHeaderRow({
         ) : null}
         {onRemoveProject ? (
           <View
-            style={!(isHovered || isMobileBreakpoint) && styles.projectKebabButtonHidden}
-            pointerEvents={isHovered || isMobileBreakpoint ? "auto" : "none"}
+            style={
+              !(isHovered || platformIsNative || isMobileBreakpoint) &&
+              styles.projectKebabButtonHidden
+            }
+            pointerEvents={isHovered || platformIsNative || isMobileBreakpoint ? "auto" : "none"}
           >
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -922,8 +935,8 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
-  const isTouchPlatform = Platform.OS !== "web";
   const prHint = useWorkspacePrHint({
     serverId: workspace.serverId,
     cwd: workspace.workspaceId,
@@ -988,7 +1001,7 @@ function WorkspaceRowInner({
           </View>
           <View style={styles.workspaceRowRight}>
             {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
-            {onArchive && (isHovered || isTouchPlatform) ? (
+            {onArchive && (isHovered || platformIsNative || isCompact) ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
                   hitSlop={8}
@@ -1607,17 +1620,13 @@ export function SidebarWorkspaceList({
   parentGestureRef,
 }: SidebarWorkspaceListProps) {
   const isMobile = useIsCompactFormFactor();
-  const isNative = Platform.OS !== "web";
   const pathname = usePathname();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
-  const isDesktopApp = getIsElectronRuntime();
-  const altDown = useKeyboardShortcutsStore((state) => state.altDown);
-  const cmdOrCtrlDown = useKeyboardShortcutsStore((state) => state.cmdOrCtrlDown);
-  const showShortcutBadges = altDown || (isDesktopApp && cmdOrCtrlDown);
+  const showShortcutBadges = useShowShortcutBadges();
 
   const getProjectOrder = useSidebarOrderStore((state) => state.getProjectOrder);
   const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
@@ -1798,34 +1807,31 @@ export function SidebarWorkspaceList({
     [getWorkspaceOrder, serverId, setWorkspaceOrder],
   );
 
-  const handleWorktreeCreated = useCallback(
-    (workspaceId: string) => {
-      setCreatingWorkspaceIds((current) => {
-        const next = new Set(current);
-        next.add(workspaceId);
-        return next;
-      });
-      const existingTimeout = creatingWorkspaceTimeoutsRef.current.get(workspaceId);
-      if (existingTimeout) {
-        clearTimeout(existingTimeout);
-      }
-      creatingWorkspaceTimeoutsRef.current.set(
-        workspaceId,
-        setTimeout(() => {
-          creatingWorkspaceTimeoutsRef.current.delete(workspaceId);
-          setCreatingWorkspaceIds((current) => {
-            if (!current.has(workspaceId)) {
-              return current;
-            }
-            const next = new Set(current);
-            next.delete(workspaceId);
-            return next;
-          });
-        }, 3000),
-      );
-    },
-    [],
-  );
+  const handleWorktreeCreated = useCallback((workspaceId: string) => {
+    setCreatingWorkspaceIds((current) => {
+      const next = new Set(current);
+      next.add(workspaceId);
+      return next;
+    });
+    const existingTimeout = creatingWorkspaceTimeoutsRef.current.get(workspaceId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    creatingWorkspaceTimeoutsRef.current.set(
+      workspaceId,
+      setTimeout(() => {
+        creatingWorkspaceTimeoutsRef.current.delete(workspaceId);
+        setCreatingWorkspaceIds((current) => {
+          if (!current.has(workspaceId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(workspaceId);
+          return next;
+        });
+      }, 3000),
+    );
+  }, []);
 
   const renderProject = useCallback(
     ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<SidebarProjectEntry>) => {
@@ -1847,7 +1853,7 @@ export function SidebarWorkspaceList({
           drag={drag}
           isDragging={isActive}
           dragHandleProps={dragHandleProps}
-          useNestable={isNative}
+          useNestable={platformIsNative}
           creatingWorkspaceIds={creatingWorkspaceIds}
         />
       );
@@ -1864,7 +1870,7 @@ export function SidebarWorkspaceList({
       serverId,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
-      isNative,
+      platformIsNative,
       creatingWorkspaceIds,
     ],
   );
@@ -1875,12 +1881,7 @@ export function SidebarWorkspaceList({
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>No projects yet</Text>
           <Text style={styles.emptyText}>Add a project to get started</Text>
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={Plus}
-            onPress={onAddProject}
-          >
+          <Button variant="ghost" size="sm" leftIcon={Plus} onPress={onAddProject}>
             Add project
           </Button>
         </View>
@@ -1893,7 +1894,7 @@ export function SidebarWorkspaceList({
           onDragEnd={handleProjectDragEnd}
           scrollEnabled={false}
           useDragHandle
-          nestable={isNative}
+          nestable={platformIsNative}
           simultaneousGestureRef={parentGestureRef}
           containerStyle={styles.projectListContainer}
         />
@@ -1904,7 +1905,7 @@ export function SidebarWorkspaceList({
 
   return (
     <View style={styles.container}>
-      {isNative ? (
+      {platformIsNative ? (
         <NestableScrollContainer
           style={styles.list}
           contentContainerStyle={styles.listContent}

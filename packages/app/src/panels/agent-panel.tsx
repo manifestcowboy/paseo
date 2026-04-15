@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
@@ -47,6 +47,7 @@ import {
   deriveRouteBottomAnchorIntent,
   deriveRouteBottomAnchorRequest,
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
+import { isNative } from "@/constants/platform";
 
 function formatProviderLabel(provider: Agent["provider"]): string {
   if (!provider) {
@@ -254,7 +255,7 @@ function AgentPanelBody({
 
   const agentState = useSessionStore(
     useShallow((state) => {
-      const agent = agentId ? state.sessions[serverId]?.agents?.get(agentId) ?? null : null;
+      const agent = agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null;
       return {
         serverId: agent?.serverId ?? null,
         id: agent?.id ?? null,
@@ -483,16 +484,19 @@ function AgentPanelBody({
     isPendingCreateForPanel && (!authoritativeStatus || isAuthoritativeBootstrapping);
   const canFinalizePendingCreate = Boolean(authoritativeStatus) && !isAuthoritativeBootstrapping;
 
-  const agent: AgentScreenAgent | null =
-    agentState.serverId && agentState.id && agentState.status && agentState.cwd
-      ? {
-          serverId: agentState.serverId,
-          id: agentState.id,
-          status: agentState.status,
-          cwd: agentState.cwd,
-          projectPlacement,
-        }
-      : null;
+  const agent = useMemo<AgentScreenAgent | null>(
+    () =>
+      agentState.serverId && agentState.id && agentState.status && agentState.cwd
+        ? {
+            serverId: agentState.serverId,
+            id: agentState.id,
+            status: agentState.status,
+            cwd: agentState.cwd,
+            projectPlacement,
+          }
+        : null,
+    [agentState.serverId, agentState.id, agentState.status, agentState.cwd, projectPlacement],
+  );
 
   const placeholderAgent: AgentScreenAgent | null = useMemo(() => {
     if (!shouldUseOptimisticStream || !agentId) {
@@ -592,7 +596,7 @@ function AgentPanelBody({
     if (!isConnected || !hasSession) {
       return;
     }
-    const shouldSyncOnEntry = needsAuthoritativeSync || Platform.OS !== "web";
+    const shouldSyncOnEntry = needsAuthoritativeSync || isNative;
     if (!shouldSyncOnEntry) {
       return;
     }
@@ -702,7 +706,6 @@ function AgentPanelBody({
     setPendingPermissions,
     shouldUseOptimisticStream,
   ]);
-
 
   if (viewState.tag === "not_found") {
     return (

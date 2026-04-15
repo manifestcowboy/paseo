@@ -7,7 +7,6 @@ import {
   Pressable,
   Text,
   View,
-  Platform,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -52,6 +51,7 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
+import { isWeb } from "@/constants/platform";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -91,7 +91,7 @@ export function FileExplorerPane({
 }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const daemons = useHosts();
   const daemonProfile = useMemo(
@@ -118,23 +118,18 @@ export function FileExplorerPane({
       : undefined,
   );
 
-  const {
-    requestDirectoryListing,
-    requestFileDownloadToken,
-    selectExplorerEntry,
-  } = useFileExplorerActions({
-    serverId,
-    workspaceId,
-    workspaceRoot: normalizedWorkspaceRoot,
-  });
+  const { requestDirectoryListing, requestFileDownloadToken, selectExplorerEntry } =
+    useFileExplorerActions({
+      serverId,
+      workspaceId,
+      workspaceRoot: normalizedWorkspaceRoot,
+    });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
   const expandedPathsArray = usePanelStore((state) =>
     workspaceStateKey ? state.expandedPathsByWorkspace[workspaceStateKey] : undefined,
   );
-  const setExpandedPathsForWorkspace = usePanelStore(
-    (state) => state.setExpandedPathsForWorkspace,
-  );
+  const setExpandedPathsForWorkspace = usePanelStore((state) => state.setExpandedPathsForWorkspace);
   const expandedPaths = useMemo(
     () => new Set(expandedPathsArray && expandedPathsArray.length > 0 ? expandedPathsArray : ["."]),
     [expandedPathsArray],
@@ -177,7 +172,8 @@ export function FileExplorerPane({
       recordHistory: false,
       setCurrentPath: false,
     });
-    const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
+    const persistedPaths =
+      usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
     if (persistedPaths) {
       for (const path of persistedPaths) {
         if (path !== ".") {
@@ -201,10 +197,7 @@ export function FileExplorerPane({
     if (newPaths.length === 0) {
       return;
     }
-    setExpandedPathsForWorkspace(
-      workspaceStateKey,
-      [...Array.from(expandedPaths), ...newPaths],
-    );
+    setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), ...newPaths]);
     newPaths.forEach((path) => {
       if (!directories.has(path)) {
         void requestDirectoryListing(path, {
@@ -234,10 +227,7 @@ export function FileExplorerPane({
           Array.from(expandedPaths).filter((path) => path !== entry.path),
         );
       } else {
-        setExpandedPathsForWorkspace(
-          workspaceStateKey,
-          [...Array.from(expandedPaths), entry.path],
-        );
+        setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), entry.path]);
         if (!directories.has(entry.path)) {
           void requestDirectoryListing(entry.path, {
             recordHistory: false,

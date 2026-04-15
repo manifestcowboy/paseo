@@ -13,6 +13,7 @@ import {
   deriveWorkspaceKind,
   normalizeWorkspaceId,
 } from "./workspace-registry-model.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -53,6 +54,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  workspaceGitService: WorkspaceGitService;
   logger: Logger;
 }): Promise<void> {
   const [projectsExists, workspacesExists] = await Promise.all([
@@ -70,13 +72,16 @@ export async function bootstrapWorkspaceRegistries(options: {
   const activeRecords = records.filter((record) => !record.archivedAt);
   const recordsByWorkspaceId = new Map<
     string,
-    { placement: Awaited<ReturnType<typeof buildProjectPlacementForCwd>>; records: StoredAgentRecord[] }
+    {
+      placement: Awaited<ReturnType<typeof buildProjectPlacementForCwd>>;
+      records: StoredAgentRecord[];
+    }
   >();
   for (const record of activeRecords) {
     const normalizedCwd = normalizeWorkspaceId(record.cwd);
     const placement = await buildProjectPlacementForCwd({
       cwd: normalizedCwd,
-      paseoHome: options.paseoHome,
+      workspaceGitService: options.workspaceGitService,
     });
     const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
     const existing = recordsByWorkspaceId.get(workspaceId) ?? { placement, records: [] };

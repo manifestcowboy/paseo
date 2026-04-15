@@ -1,6 +1,5 @@
 import { WebSocketServer } from "ws";
 import type { Server as HTTPServer } from "http";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -13,7 +12,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
-import { BackgroundGitFetchManager } from "./background-git-fetch-manager.js";
+import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
   type WSHelloMessage,
@@ -23,21 +22,22 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import {
-  asUint8Array,
-  decodeTerminalStreamFrame,
-} from "../shared/terminal-stream-protocol.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
 import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
-import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderOverride,
+} from "./agent/provider-launch-config.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { buildProviderRegistry } from "./agent/provider-registry.js";
+import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
-import type { VoiceCallerContext, VoiceMcpStdioConfig, VoiceSpeakHandler } from "./voice-types.js";
+import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
   computeShouldNotifyClient,
   computeShouldSendPush,
@@ -49,7 +49,6 @@ import {
   findLatestPermissionRequest,
 } from "../shared/agent-attention-notification.js";
 
-export type AgentMcpTransportFactory = () => Promise<Transport>;
 export type ExternalSocketMetadata = {
   transport: "relay";
   externalSessionKey?: string;
@@ -66,6 +65,66 @@ type WebSocketServerConfig = {
 };
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
+
+function createFallbackWorkspaceGitService(): WorkspaceGitServiceImpl {
+  return {
+    subscribe: async ({ cwd }: { cwd: string }) => ({
+      initial: {
+        cwd,
+        git: {
+          isGit: false,
+          repoRoot: null,
+          mainRepoRoot: null,
+          currentBranch: null,
+          remoteUrl: null,
+          isPaseoOwnedWorktree: false,
+          isDirty: null,
+          aheadBehind: null,
+          aheadOfOrigin: null,
+          behindOfOrigin: null,
+          diffStat: null,
+        },
+        github: {
+          featuresEnabled: false,
+          pullRequest: null,
+          error: null,
+          refreshedAt: null,
+        },
+      },
+      unsubscribe: () => {},
+    }),
+    peekSnapshot: () => null,
+    getSnapshot: async (cwd: string) => ({
+      cwd,
+      git: {
+        isGit: false,
+        repoRoot: null,
+        mainRepoRoot: null,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        isDirty: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        diffStat: null,
+      },
+      github: {
+        featuresEnabled: false,
+        pullRequest: null,
+        error: null,
+        refreshedAt: null,
+      },
+    }),
+    refresh: async () => {},
+    requestWorkingTreeWatch: async (cwd: string) => ({
+      repoRoot: cwd,
+      unsubscribe: () => {},
+    }),
+    scheduleRefreshForCwd: () => {},
+    dispose: () => {},
+  } as unknown as WorkspaceGitServiceImpl;
+}
 
 function createNoopProjectRegistry(): ProjectRegistry {
   return {
@@ -238,25 +297,22 @@ export class VoiceAssistantWebSocketServer {
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
-  private readonly backgroundGitFetchManager: BackgroundGitFetchManager;
+  private readonly workspaceGitService: WorkspaceGitServiceImpl;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
+  private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
-  private readonly createAgentMcpTransport: AgentMcpTransportFactory;
+  private readonly mcpBaseUrl: string | null;
   private readonly speech: SpeechService | null;
   private readonly terminalManager: TerminalManager | null;
   private readonly dictation: {
     finalTimeoutMs?: number;
   } | null;
-  private readonly voice: {
-    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-    ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-    removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
-  } | null;
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+  private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private serverCapabilities: ServerCapabilities | undefined;
@@ -283,6 +339,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly requestLatencies = new Map<string, number[]>();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
+  private unsubscribeDaemonConfigChange: (() => void) | null = null;
 
   constructor(
     server: HTTPServer,
@@ -292,19 +349,16 @@ export class VoiceAssistantWebSocketServer {
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
-    createAgentMcpTransport: AgentMcpTransportFactory,
+    daemonConfigStore: DaemonConfigStore,
+    mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
-    voice?: {
-      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-      ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-      removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
-    },
     dictation?: {
       finalTimeoutMs?: number;
     },
     agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
+    providerOverrides?: Record<string, ProviderOverride>,
     daemonVersion?: string,
     onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
     projectRegistry?: ProjectRegistry,
@@ -313,6 +367,7 @@ export class VoiceAssistantWebSocketServer {
     loopService?: LoopService,
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
+    workspaceGitService?: WorkspaceGitServiceImpl,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -340,21 +395,21 @@ export class VoiceAssistantWebSocketServer {
       throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
     }
     this.checkoutDiffManager = checkoutDiffManager;
-    this.backgroundGitFetchManager = new BackgroundGitFetchManager({
-      logger: this.logger,
-    });
+    this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.createAgentMcpTransport = createAgentMcpTransport;
+    this.daemonConfigStore = daemonConfigStore;
+    this.mcpBaseUrl = mcpBaseUrl;
     this.speech = speech ?? null;
     this.terminalManager = terminalManager ?? null;
-    this.voice = voice ?? null;
     this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
+    this.providerOverrides = providerOverrides;
     const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
     this.providerSnapshotManager = new ProviderSnapshotManager(
       buildProviderRegistry(providerSnapshotLogger, {
         runtimeSettings: this.agentProviderRuntimeSettings,
+        providerOverrides: this.providerOverrides,
       }),
       providerSnapshotLogger,
     );
@@ -362,9 +417,13 @@ export class VoiceAssistantWebSocketServer {
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
-    this.unsubscribeSpeechReadiness = this.speech?.onReadinessChange((snapshot) => {
-      this.publishSpeechReadiness(snapshot);
-    }) ?? null;
+    this.unsubscribeSpeechReadiness =
+      this.speech?.onReadinessChange((snapshot) => {
+        this.publishSpeechReadiness(snapshot);
+      }) ?? null;
+    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config) => {
+      this.broadcastDaemonConfigChanged(config);
+    });
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
@@ -455,6 +514,8 @@ export class VoiceAssistantWebSocketServer {
   public async close(): Promise<void> {
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
+    this.unsubscribeDaemonConfigChange?.();
+    this.unsubscribeDaemonConfigChange = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -512,8 +573,8 @@ export class VoiceAssistantWebSocketServer {
 
     await Promise.all(cleanupPromises);
     this.providerSnapshotManager.destroy();
-    this.backgroundGitFetchManager.dispose();
     this.checkoutDiffManager.dispose();
+    this.workspaceGitService.dispose();
     this.pendingConnections.clear();
     this.sessions.clear();
     this.externalSessionsByKey.clear();
@@ -527,10 +588,7 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendBinaryToClient(
-    ws: WebSocketLike,
-    frame: Uint8Array,
-  ): void {
+  private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array): void {
     if (ws.readyState !== 1) {
       return;
     }
@@ -543,10 +601,7 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendBinaryToConnection(
-    connection: SessionConnection,
-    frame: Uint8Array,
-  ): void {
+  private sendBinaryToConnection(connection: SessionConnection, frame: Uint8Array): void {
     for (const ws of connection.sockets) {
       this.sendBinaryToClient(ws, frame);
     }
@@ -649,14 +704,14 @@ export class VoiceAssistantWebSocketServer {
       loopService: this.loopService,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
-      backgroundGitFetchManager: this.backgroundGitFetchManager,
-      createAgentMcpTransport: this.createAgentMcpTransport,
+      workspaceGitService: this.workspaceGitService,
+      daemonConfigStore: this.daemonConfigStore,
+      mcpBaseUrl: this.mcpBaseUrl,
       stt: () => this.speech?.resolveStt() ?? null,
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       voice: {
-        ...(this.voice ?? {}),
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,
       },
       voiceBridge: {
@@ -672,8 +727,6 @@ export class VoiceAssistantWebSocketServer {
         unregisterVoiceCallerContext: (agentId) => {
           this.voiceCallerContexts.delete(agentId);
         },
-        ensureVoiceMcpSocketForAgent: this.voice?.ensureVoiceMcpSocketForAgent,
-        removeVoiceMcpSocketForAgent: this.voice?.removeVoiceMcpSocketForAgent,
       },
       dictation:
         this.dictation || this.speech
@@ -684,6 +737,7 @@ export class VoiceAssistantWebSocketServer {
             }
           : undefined,
       agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
+      providerOverrides: this.providerOverrides,
     });
 
     connection = {
@@ -818,8 +872,22 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
+  private createDaemonConfigChangedMessage(config: MutableDaemonConfig): WSOutboundMessage {
+    return wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "daemon_config_changed",
+        config,
+      },
+    });
+  }
+
   private broadcastCapabilitiesUpdate(): void {
     this.broadcast(this.createServerInfoMessage());
+  }
+
+  private broadcastDaemonConfigChanged(config: MutableDaemonConfig): void {
+    this.broadcast(this.createDaemonConfigChangedMessage(config));
   }
 
   private bindSocketHandlers(ws: WebSocketLike): void {

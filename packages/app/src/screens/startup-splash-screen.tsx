@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Check, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
@@ -7,11 +7,9 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { Fonts } from "@/constants/theme";
-import {
-  getDesktopDaemonLogs,
-  type DesktopDaemonLogs,
-} from "@/desktop/daemon/desktop-daemon";
+import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { isWeb } from "@/constants/platform";
 
 type StartupSplashScreenProps = {
   bootstrapState?: {
@@ -45,7 +43,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorScrollView: {
     flex: 1,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? {
           overflowX: "auto",
           overflowY: "auto",
@@ -147,7 +145,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     lineHeight: 18,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? {
           whiteSpace: "pre",
           overflowWrap: "normal",
@@ -215,7 +213,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       : phase === "connecting"
         ? [
             { key: "starting-daemon", label: "Started local server", status: "complete" as const },
-            { key: "connecting", label: "Connecting to local server...", status: "active" as const },
+            {
+              key: "connecting",
+              label: "Connecting to local server...",
+              status: "active" as const,
+            },
           ]
         : [
             { key: "starting-daemon", label: "Started local server", status: "complete" as const },
@@ -291,12 +293,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
           </View>
 
           <Text style={styles.errorDescription}>
-            The local server failed to start. If this keeps happening, please report the issue on GitHub and include the logs below.
+            The local server failed to start. If this keeps happening, please report the issue on
+            GitHub and include the logs below.
           </Text>
 
-          <Text style={styles.errorMessage}>
-            {bootstrapState.error}
-          </Text>
+          <Text style={styles.errorMessage}>{bootstrapState.error}</Text>
 
           {daemonLogs?.logPath ? <Text style={styles.logsMeta}>{daemonLogs.logPath}</Text> : null}
 
