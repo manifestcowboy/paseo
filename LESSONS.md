@@ -304,6 +304,23 @@ npm run typecheck   # should now be clean
 
 ---
 
+## Playwright CI Should Not Hard-Fail On Missing Speech Backends
+
+**Rule**: App E2E global setup must not crash the whole Playwright suite just because OpenAI speech and local speech models are both unavailable, unless the suite explicitly needs dictation or voice coverage.
+
+**What went wrong**: GitHub Actions `playwright` failed before any tests ran. `packages/app/e2e/global-setup.ts` probed `OPENAI_API_KEY`, then fell back to `~/.paseo/models/local-speech`, and threw when neither was available. That made unrelated browser tests fail even though they do not exercise dictation.
+
+**How to avoid**:
+1. In global setup, treat speech as optional for non-dictation suites.
+2. If OpenAI speech is unavailable and local speech models are missing, continue with:
+   - `PASEO_DICTATION_ENABLED=0`
+   - `PASEO_VOICE_MODE_ENABLED=0`
+3. Only enable local speech providers when local models are actually present.
+4. Reserve hard failures for suites that explicitly verify dictation or voice features.
+5. When reproducing CI locally, simulate the runner with no speech backend by clearing `OPENAI_API_KEY` and pointing `HOME` at a temp directory.
+
+---
+
 ## Keep One Worktree, Not Five
 
 **Rule**: Never accumulate multiple git worktrees of the same repo. Use one (`~/paseo` on `main`) and create temporary worktrees only when actively needed.
