@@ -88,6 +88,7 @@ type ControlledAgentStatusBarProps = {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
+  onModelSelectorOpen?: () => void;
 };
 
 export interface DraftAgentStatusBarProps {
@@ -110,6 +111,7 @@ export interface DraftAgentStatusBarProps {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
+  onModelSelectorOpen?: () => void;
   disabled?: boolean;
 }
 
@@ -217,6 +219,7 @@ function ControlledStatusBar({
   features,
   onSetFeature,
   onDropdownClose,
+  onModelSelectorOpen,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
   const isWeb = Platform.OS === "web";
@@ -411,6 +414,7 @@ function ControlledStatusBar({
                     onToggleFavorite={onToggleFavoriteModel}
                     isLoading={isModelLoading}
                     disabled={modelDisabled}
+                    onOpen={onModelSelectorOpen}
                     onClose={onDropdownClose}
                   />
                 </View>
@@ -662,6 +666,7 @@ function ControlledStatusBar({
                   onToggleFavorite={onToggleFavoriteModel}
                   isLoading={isModelLoading}
                   disabled={modelDisabled}
+                  onOpen={onModelSelectorOpen}
                   onClose={onDropdownClose}
                   renderTrigger={({ selectedModelLabel }) => (
                     <View
@@ -875,6 +880,7 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     entries: snapshotEntries,
     isLoading: snapshotIsLoading,
     isFetching: snapshotIsFetching,
+    invalidate: invalidateSnapshot,
   } = useProvidersSnapshot(serverId);
 
   const snapshotModels = useMemo(() => {
@@ -962,13 +968,14 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
           return;
         }
         void updatePreferences(
-          mergeProviderPreferences({
-            preferences,
-            provider: agent.provider,
-            updates: {
-              model: modelId,
-            },
-          }),
+          (current) =>
+            mergeProviderPreferences({
+              preferences: current,
+              provider: agent.provider,
+              updates: {
+                model: modelId,
+              },
+            }),
         ).catch((error) => {
           console.warn("[AgentStatusBar] persist model preference failed", error);
         });
@@ -978,7 +985,7 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
       }}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={(provider, modelId) => {
-        void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+        void updatePreferences((current) => toggleFavoriteModel({ preferences: current, provider, modelId })).catch((error) => {
           console.warn("[AgentStatusBar] toggle favorite model failed", error);
         });
       }}
@@ -991,16 +998,17 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         const activeModelId = modelSelection.activeModelId;
         if (activeModelId) {
           void updatePreferences(
-            mergeProviderPreferences({
-              preferences,
-              provider: agent.provider,
-              updates: {
-                model: activeModelId,
-                thinkingByModel: {
-                  [activeModelId]: thinkingOptionId,
+            (current) =>
+              mergeProviderPreferences({
+                preferences: current,
+                provider: agent.provider,
+                updates: {
+                  model: activeModelId,
+                  thinkingByModel: {
+                    [activeModelId]: thinkingOptionId,
+                  },
                 },
-              },
-            }),
+              }),
           ).catch((error) => {
             console.warn("[AgentStatusBar] persist thinking preference failed", error);
           });
@@ -1014,11 +1022,26 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         if (!client) {
           return;
         }
+        void updatePreferences(
+          (current) =>
+            mergeProviderPreferences({
+              preferences: current,
+              provider: agent.provider,
+              updates: {
+                featureValues: {
+                  [featureId]: value,
+                },
+              },
+            }),
+        ).catch((error) => {
+          console.warn("[AgentStatusBar] persist feature preference failed", error);
+        });
         void client.setAgentFeature(agentId, featureId, value).catch((error) => {
           console.warn("[AgentStatusBar] setAgentFeature failed", error);
         });
       }}
       isModelLoading={snapshotIsLoading || snapshotIsFetching}
+      onModelSelectorOpen={invalidateSnapshot}
       onDropdownClose={onDropdownClose}
       disabled={!client}
     />
@@ -1045,6 +1068,7 @@ export function DraftAgentStatusBar({
   features,
   onSetFeature,
   onDropdownClose,
+  onModelSelectorOpen,
   disabled = false,
 }: DraftAgentStatusBarProps) {
   const isWeb = Platform.OS === "web";
@@ -1083,12 +1107,13 @@ export function DraftAgentStatusBar({
           onSelect={onSelectProviderAndModel}
           favoriteKeys={favoriteKeys}
           onToggleFavorite={(provider, modelId) => {
-            void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+            void updatePreferences((current) => toggleFavoriteModel({ preferences: current, provider, modelId })).catch((error) => {
               console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
             });
           }}
           isLoading={isAllModelsLoading}
           disabled={disabled}
+          onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
         />
         <ControlledStatusBar
@@ -1129,7 +1154,7 @@ export function DraftAgentStatusBar({
         isModelLoading={isAllModelsLoading}
         favoriteKeys={favoriteKeys}
         onToggleFavoriteModel={(provider, modelId) => {
-          void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+          void updatePreferences((current) => toggleFavoriteModel({ preferences: current, provider, modelId })).catch((error) => {
             console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
           });
         }}
@@ -1138,6 +1163,7 @@ export function DraftAgentStatusBar({
         onSelectThinkingOption={onSelectThinkingOption}
         features={features}
         onSetFeature={onSetFeature}
+        onModelSelectorOpen={onModelSelectorOpen}
         disabled={disabled}
       />
     </>

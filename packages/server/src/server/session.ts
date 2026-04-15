@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
 import {
+  isLegacyEditorTargetId,
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
   type SessionInboundMessage,
@@ -28,6 +29,7 @@ import {
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
+  type EditorTargetDescriptorPayload,
   type EditorTargetId,
   type ProjectPlacementPayload,
   type WorkspaceDescriptorPayload,
@@ -155,6 +157,7 @@ import {
   commitChanges,
   mergeToBase,
   mergeFromBase,
+  pullCurrentBranch,
   pushCurrentBranch,
   createPullRequest,
   getPullRequestStatus,
@@ -202,13 +205,14 @@ const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
+const MIN_VERSION_FLEXIBLE_EDITOR_IDS = "0.1.50";
 
-function clientSupportsAllProviders(appVersion: string | null): boolean {
+function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boolean {
   if (!appVersion) return false;
   // Strip RC/prerelease suffix: "0.1.45-rc.4" → "0.1.45"
   const base = appVersion.replace(/-.*$/, "");
   const parts = base.split(".").map(Number);
-  const minParts = MIN_VERSION_ALL_PROVIDERS.split(".").map(Number);
+  const minParts = minVersion.split(".").map(Number);
   for (let i = 0; i < minParts.length; i++) {
     const a = parts[i] ?? 0;
     const b = minParts[i] ?? 0;
@@ -218,10 +222,16 @@ function clientSupportsAllProviders(appVersion: string | null): boolean {
   return true;
 }
 
+function clientSupportsAllProviders(appVersion: string | null): boolean {
+  return isAppVersionAtLeast(appVersion, MIN_VERSION_ALL_PROVIDERS);
+}
+
+function clientSupportsFlexibleEditorIds(appVersion: string | null): boolean {
+  return isAppVersionAtLeast(appVersion, MIN_VERSION_FLEXIBLE_EDITOR_IDS);
+}
+
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
 const WORKSPACE_GIT_WATCH_REMOVED_FINGERPRINT = "__removed__";
-const TERMINAL_STREAM_HIGH_WATER_BYTES = 256 * 1024;
-const TERMINAL_STREAM_LOW_WATER_BYTES = 16 * 1024;
 const MAX_TERMINAL_STREAM_SLOTS = 256;
 
 function deriveInitialAgentTitle(prompt: string): string | null {
@@ -285,7 +295,6 @@ type ActiveTerminalStream = {
   slot: number;
   unsubscribe: () => void;
   needsSnapshot: boolean;
-  snapshotRetryTimer: ReturnType<typeof setTimeout> | null;
 };
 
 export type SessionRuntimeMetrics = {
@@ -397,7 +406,6 @@ export type SessionOptions = {
   appVersion: string | null;
   onMessage: (msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
-  getBinaryBufferedAmount?: () => number;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
@@ -552,7 +560,6 @@ export class Session {
   private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
-  private readonly getBinaryBufferedAmount: (() => number) | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
@@ -651,7 +658,6 @@ export class Session {
       appVersion,
       onMessage,
       onBinaryMessage,
-      getBinaryBufferedAmount,
       onLifecycleIntent,
       logger,
       downloadTokenStore,
@@ -681,7 +687,6 @@ export class Session {
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
     this.onBinaryMessage = onBinaryMessage ?? null;
-    this.getBinaryBufferedAmount = getBinaryBufferedAmount ?? null;
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
@@ -1215,6 +1220,15 @@ export class Session {
     return LEGACY_PROVIDER_IDS.has(provider);
   }
 
+  private filterEditorsForClient(
+    editors: EditorTargetDescriptorPayload[],
+  ): EditorTargetDescriptorPayload[] {
+    if (clientSupportsFlexibleEditorIds(this.appVersion)) {
+      return editors;
+    }
+    return editors.filter((editor) => isLegacyEditorTargetId(editor.id));
+  }
+
   private matchesAgentFilter(options: {
     agent: AgentSnapshotPayload;
     project: ProjectPlacementPayload;
@@ -1726,6 +1740,22 @@ export class Session {
           this.handleUnsubscribeCheckoutDiffRequest(msg);
           break;
 
+        case "checkout_switch_branch_request":
+          await this.handleCheckoutSwitchBranchRequest(msg);
+          break;
+
+        case "stash_save_request":
+          await this.handleStashSaveRequest(msg);
+          break;
+
+        case "stash_pop_request":
+          await this.handleStashPopRequest(msg);
+          break;
+
+        case "stash_list_request":
+          await this.handleStashListRequest(msg);
+          break;
+
         case "checkout_commit_request":
           await this.handleCheckoutCommitRequest(msg);
           break;
@@ -1736,6 +1766,10 @@ export class Session {
 
         case "checkout_merge_from_base_request":
           await this.handleCheckoutMergeFromBaseRequest(msg);
+          break;
+
+        case "checkout_pull_request":
+          await this.handleCheckoutPullRequest(msg);
           break;
 
         case "checkout_push_request":
@@ -2836,7 +2870,7 @@ export class Session {
     images?: Array<{ data: string; mimeType: string }>,
     runOptions?: AgentRunOptions,
     options?: { spokenInput?: boolean },
-  ): Promise<void> {
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     this.sessionLogger.info(
       { agentId, textPreview: text.substring(0, 50), imageCount: images?.length ?? 0 },
       `Sending text to agent ${agentId}${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ""}`,
@@ -2848,7 +2882,10 @@ export class Session {
       await this.ensureAgentLoaded(agentId);
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to initialize agent before sending prompt");
-      return;
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
 
     try {
@@ -2866,7 +2903,7 @@ export class Session {
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
     const prompt = this.buildAgentPrompt(promptText, images);
 
-    this.startAgentStream(agentId, prompt, runOptions);
+    return this.startAgentStream(agentId, prompt, runOptions);
   }
 
   /**
@@ -2914,6 +2951,29 @@ export class Session {
       const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, { labels });
       await this.forwardAgentUpdate(snapshot);
 
+      if (trimmedPrompt) {
+        scheduleAgentMetadataGeneration({
+          agentManager: this.agentManager,
+          agentId: snapshot.id,
+          cwd: snapshot.cwd,
+          initialPrompt: trimmedPrompt,
+          explicitTitle,
+          paseoHome: this.paseoHome,
+          logger: this.sessionLogger,
+        });
+
+        const started = await this.handleSendAgentMessage(
+          snapshot.id,
+          trimmedPrompt,
+          resolveClientMessageId(clientMessageId),
+          images,
+          outputSchema ? { outputSchema } : undefined,
+        );
+        if (!started.ok) {
+          throw new Error(started.error);
+        }
+      }
+
       if (requestId) {
         const agentPayload = await this.getAgentPayloadById(snapshot.id);
         if (!agentPayload) {
@@ -2927,40 +2987,6 @@ export class Session {
             requestId,
             agent: agentPayload,
           },
-        });
-      }
-
-      if (trimmedPrompt) {
-        scheduleAgentMetadataGeneration({
-          agentManager: this.agentManager,
-          agentId: snapshot.id,
-          cwd: snapshot.cwd,
-          initialPrompt: trimmedPrompt,
-          explicitTitle,
-          paseoHome: this.paseoHome,
-          logger: this.sessionLogger,
-        });
-
-        void this.handleSendAgentMessage(
-          snapshot.id,
-          trimmedPrompt,
-          resolveClientMessageId(clientMessageId),
-          images,
-          outputSchema ? { outputSchema } : undefined,
-        ).catch((promptError) => {
-          this.sessionLogger.error(
-            { err: promptError, agentId: snapshot.id },
-            `Failed to run initial prompt for agent ${snapshot.id}`,
-          );
-          this.emit({
-            type: "activity_log",
-            payload: {
-              id: uuidv4(),
-              timestamp: new Date(),
-              type: "error",
-              content: `Initial prompt failed: ${(promptError as Error)?.message ?? promptError}`,
-            },
-          });
         });
       }
 
@@ -3083,11 +3109,7 @@ export class Session {
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
-        if (existing.persistence) {
-          snapshot = await this.agentManager.reloadAgentSession(agentId);
-        } else {
-          snapshot = existing;
-        }
+        snapshot = await this.agentManager.reloadAgentSession(agentId);
       } else {
         const record = await this.agentStorage.get(agentId);
         if (!record) {
@@ -3924,8 +3946,16 @@ export class Session {
     );
 
     try {
-      await this.agentManager.respondToPermission(agentId, requestId, response);
+      const result = await this.agentManager.respondToPermission(agentId, requestId, response);
       this.sessionLogger.debug({ agentId }, `Permission response forwarded to agent ${agentId}`);
+
+      if (result?.followUpPrompt) {
+        this.sessionLogger.debug(
+          { agentId },
+          "Permission response requires follow-up turn, starting agent stream",
+        );
+        this.startAgentStream(agentId, result.followUpPrompt);
+      }
     } catch (error: any) {
       this.sessionLogger.error(
         { err: error, agentId, requestId },
@@ -4411,6 +4441,139 @@ export class Session {
     this.checkoutDiffSubscriptions.delete(msg.subscriptionId);
   }
 
+  private async handleCheckoutSwitchBranchRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_switch_branch_request" }>,
+  ): Promise<void> {
+    const { cwd, branch, requestId } = msg;
+
+    try {
+      await this.checkoutExistingBranch(cwd, branch);
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+
+      // Push a workspace_update immediately so the sidebar/header reflect
+      // the new branch name without waiting for the background git watcher.
+      await this.emitWorkspaceUpdateForCwd(cwd);
+
+      this.emit({
+        type: "checkout_switch_branch_response",
+        payload: {
+          cwd,
+          success: true,
+          branch,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_switch_branch_response",
+        payload: {
+          cwd,
+          success: false,
+          branch,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stash handlers
+  // ---------------------------------------------------------------------------
+
+  private static readonly PASEO_STASH_PREFIX = "paseo-auto-stash:";
+
+  private async handleStashSaveRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_save_request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    try {
+      const branchLabel = msg.branch?.trim() ?? "";
+      const message = branchLabel
+        ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
+        : `${Session.PASEO_STASH_PREFIX} unnamed`;
+      await execFileAsync("git", ["stash", "push", "--include-untracked", "-m", message], { cwd });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "stash_save_response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_save_response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  private async handleStashPopRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_pop_request" }>,
+  ): Promise<void> {
+    const { cwd, stashIndex, requestId } = msg;
+    try {
+      await execFileAsync("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "stash_pop_response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_pop_response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  private async handleStashListRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_list_request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    const paseoOnly = msg.paseoOnly !== false;
+    try {
+      const { stdout } = await execAsync("git stash list --format=%gd%x00%s", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
+      const lines = stdout.trim().split("\n").filter(Boolean);
+      const entries: Array<{
+        index: number;
+        message: string;
+        branch: string | null;
+        isPaseo: boolean;
+      }> = [];
+
+      for (const line of lines) {
+        const sepIdx = line.indexOf("\0");
+        if (sepIdx < 0) continue;
+        const refPart = line.slice(0, sepIdx);
+        const subject = line.slice(sepIdx + 1);
+        const indexMatch = refPart.match(/\{(\d+)\}/);
+        if (!indexMatch) continue;
+        const index = Number(indexMatch[1]);
+        const prefixIdx = subject.indexOf(Session.PASEO_STASH_PREFIX);
+        const isPaseo = prefixIdx >= 0;
+        const branch = isPaseo
+          ? subject.slice(prefixIdx + Session.PASEO_STASH_PREFIX.length).trim() || null
+          : null;
+
+        if (paseoOnly && !isPaseo) continue;
+        entries.push({ index, message: subject, branch, isPaseo });
+      }
+
+      this.emit({
+        type: "stash_list_response",
+        payload: { cwd, entries, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_list_response",
+        payload: { cwd, entries: [], error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
   private async handleCheckoutCommitRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_commit_request" }>,
   ): Promise<void> {
@@ -4561,6 +4724,37 @@ export class Session {
     } catch (error) {
       this.emit({
         type: "checkout_merge_from_base_response",
+        payload: {
+          cwd,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutPullRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pull_request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      await pullCurrentBranch(cwd);
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+
+      this.emit({
+        type: "checkout_pull_response",
+        payload: {
+          cwd,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_pull_response",
         payload: {
           cwd,
           success: false,
@@ -5306,7 +5500,7 @@ export class Session {
     if (agent.status === "error" || agent.attentionReason === "error") {
       return "failed";
     }
-    if (agent.status === "running" || agent.status === "initializing") {
+    if (agent.status === "running") {
       return "running";
     }
     if (agent.requiresAttention) {
@@ -6095,7 +6289,7 @@ export class Session {
   }
 
   async getAvailableEditorTargets() {
-    return listAvailableEditorTargets();
+    return this.filterEditorsForClient(await listAvailableEditorTargets());
   }
 
   async openEditorTarget(options: { editorId: EditorTargetId; path: string }): Promise<void> {
@@ -6602,6 +6796,7 @@ export class Session {
     try {
       let result = await this.agentManager.waitForAgentEvent(agentId, {
         signal: abortController.signal,
+        waitForActive: true,
       });
       let final = await this.getAgentPayloadById(agentId);
       if (!final) {
@@ -7522,7 +7717,9 @@ export class Session {
         listStoredAgents: () => this.agentStorage.list(),
         listLiveAgents: () => this.agentManager.listAgents(),
         resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
-        sendAgentMessage: (agentId, text) => this.handleSendAgentMessage(agentId, text),
+        sendAgentMessage: async (agentId, text) => {
+          await this.handleSendAgentMessage(agentId, text);
+        },
       });
     } catch (error) {
       this.emitChatRpcError(request, error);
@@ -8256,7 +8453,6 @@ export class Session {
       slot,
       unsubscribe: () => {},
       needsSnapshot: true,
-      snapshotRetryTimer: null,
     };
 
     this.activeTerminalStreams.set(slot, activeStream);
@@ -8273,10 +8469,6 @@ export class Session {
       if (activeStream.needsSnapshot || message.data.length === 0) {
         return;
       }
-      if (this.getCurrentBinaryBufferedAmount() >= TERMINAL_STREAM_HIGH_WATER_BYTES) {
-        this.markAllActiveTerminalStreamsForSnapshot();
-        return;
-      }
       this.emitBinary(
         encodeTerminalStreamFrame({
           opcode: TerminalStreamOpcode.Output,
@@ -8284,9 +8476,6 @@ export class Session {
           payload: new Uint8Array(Buffer.from(message.data, "utf8")),
         }),
       );
-      if (this.getCurrentBinaryBufferedAmount() >= TERMINAL_STREAM_HIGH_WATER_BYTES) {
-        this.markAllActiveTerminalStreamsForSnapshot();
-      }
     });
     return slot;
   }
@@ -8297,21 +8486,6 @@ export class Session {
       !activeStream.needsSnapshot
     ) {
       return;
-    }
-
-    if (this.getCurrentBinaryBufferedAmount() > TERMINAL_STREAM_LOW_WATER_BYTES) {
-      if (!activeStream.snapshotRetryTimer) {
-        activeStream.snapshotRetryTimer = setTimeout(() => {
-          activeStream.snapshotRetryTimer = null;
-          this.trySendTerminalSnapshot(activeStream);
-        }, 33);
-      }
-      return;
-    }
-
-    if (activeStream.snapshotRetryTimer) {
-      clearTimeout(activeStream.snapshotRetryTimer);
-      activeStream.snapshotRetryTimer = null;
     }
 
     const terminal = this.terminalManager?.getTerminal(activeStream.terminalId);
@@ -8328,13 +8502,6 @@ export class Session {
         payload: encodeTerminalSnapshotPayload(terminal.getState()),
       }),
     );
-  }
-
-  private markAllActiveTerminalStreamsForSnapshot(): void {
-    for (const activeStream of this.activeTerminalStreams.values()) {
-      activeStream.needsSnapshot = true;
-      this.trySendTerminalSnapshot(activeStream);
-    }
   }
 
   private allocateTerminalSlot(): number | null {
@@ -8361,10 +8528,6 @@ export class Session {
     }
     this.activeTerminalStreams.delete(slot);
     this.terminalIdToSlot.delete(terminalId);
-    if (activeStream.snapshotRetryTimer) {
-      clearTimeout(activeStream.snapshotRetryTimer);
-      activeStream.snapshotRetryTimer = null;
-    }
     try {
       activeStream.unsubscribe();
     } catch (error) {
@@ -8387,11 +8550,4 @@ export class Session {
     }
   }
 
-  private getCurrentBinaryBufferedAmount(): number {
-    const bufferedAmount = this.getBinaryBufferedAmount?.() ?? 0;
-    if (!Number.isFinite(bufferedAmount) || bufferedAmount < 0) {
-      return 0;
-    }
-    return Math.floor(bufferedAmount);
-  }
 }

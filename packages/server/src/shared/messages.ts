@@ -47,6 +47,7 @@ import {
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
 } from "../server/loop/rpc-schemas.js";
+import type { LiteralUnion } from "./literal-union.js";
 import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
@@ -1028,6 +1029,12 @@ export const CheckoutMergeFromBaseRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutPullRequestSchema = z.object({
+  type: z.literal("checkout_pull_request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
 export const CheckoutPushRequestSchema = z.object({
   type: z.literal("checkout_push_request"),
   cwd: z.string(),
@@ -1053,6 +1060,37 @@ export const ValidateBranchRequestSchema = z.object({
   type: z.literal("validate_branch_request"),
   cwd: z.string(),
   branchName: z.string(),
+  requestId: z.string(),
+});
+
+export const CheckoutSwitchBranchRequestSchema = z.object({
+  type: z.literal("checkout_switch_branch_request"),
+  cwd: z.string(),
+  branch: z.string(),
+  requestId: z.string(),
+});
+
+export const StashSaveRequestSchema = z.object({
+  type: z.literal("stash_save_request"),
+  cwd: z.string(),
+  /** Branch name to tag the stash with for later identification. */
+  branch: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const StashPopRequestSchema = z.object({
+  type: z.literal("stash_pop_request"),
+  cwd: z.string(),
+  /** Zero-based index from stash_list_response. */
+  stashIndex: z.number().int().min(0),
+  requestId: z.string(),
+});
+
+export const StashListRequestSchema = z.object({
+  type: z.literal("stash_list_request"),
+  cwd: z.string(),
+  /** If true, only return paseo-created stashes. Default true. */
+  paseoOnly: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -1096,14 +1134,32 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const EditorTargetIdSchema = z.enum([
+// TODO(2026-07): Remove once most clients are on >=0.1.50 and support arbitrary editor ids.
+export const LEGACY_EDITOR_TARGET_IDS = [
   "cursor",
   "vscode",
   "zed",
   "finder",
   "explorer",
   "file-manager",
-]);
+] as const;
+
+export const KNOWN_EDITOR_TARGET_IDS = [...LEGACY_EDITOR_TARGET_IDS, "webstorm"] as const;
+
+export const KnownEditorTargetIdSchema = z.enum(KNOWN_EDITOR_TARGET_IDS);
+export const LegacyEditorTargetIdSchema = z.enum(LEGACY_EDITOR_TARGET_IDS);
+export const EditorTargetIdSchema = z.string().trim().min(1);
+
+const KNOWN_EDITOR_TARGET_ID_SET = new Set<string>(KNOWN_EDITOR_TARGET_IDS);
+const LEGACY_EDITOR_TARGET_ID_SET = new Set<string>(LEGACY_EDITOR_TARGET_IDS);
+
+export function isKnownEditorTargetId(value: string): value is KnownEditorTargetId {
+  return KNOWN_EDITOR_TARGET_ID_SET.has(value);
+}
+
+export function isLegacyEditorTargetId(value: string): value is LegacyEditorTargetId {
+  return LEGACY_EDITOR_TARGET_ID_SET.has(value);
+}
 
 export const EditorTargetDescriptorPayloadSchema = z.object({
   id: EditorTargetIdSchema,
@@ -1370,9 +1426,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutCommitRequestSchema,
   CheckoutMergeRequestSchema,
   CheckoutMergeFromBaseRequestSchema,
+  CheckoutPullRequestSchema,
   CheckoutPushRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrStatusRequestSchema,
+  CheckoutSwitchBranchRequestSchema,
+  StashSaveRequestSchema,
+  StashPopRequestSchema,
+  StashListRequestSchema,
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
   DirectorySuggestionsRequestSchema,
@@ -2132,6 +2193,16 @@ export const CheckoutMergeFromBaseResponseSchema = z.object({
   }),
 });
 
+export const CheckoutPullResponseSchema = z.object({
+  type: z.literal("checkout_pull_response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutPushResponseSchema = z.object({
   type: z.literal("checkout_push_response"),
   payload: z.object({
@@ -2168,6 +2239,54 @@ export const CheckoutPrStatusResponseSchema = z.object({
     cwd: z.string(),
     status: CheckoutPrStatusSchema.nullable(),
     githubFeaturesEnabled: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutSwitchBranchResponseSchema = z.object({
+  type: z.literal("checkout_switch_branch_response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    branch: z.string(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+const StashEntrySchema = z.object({
+  index: z.number().int().min(0),
+  message: z.string(),
+  branch: z.string().nullable(),
+  isPaseo: z.boolean(),
+});
+
+export const StashSaveResponseSchema = z.object({
+  type: z.literal("stash_save_response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const StashPopResponseSchema = z.object({
+  type: z.literal("stash_pop_response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const StashListResponseSchema = z.object({
+  type: z.literal("stash_list_response"),
+  payload: z.object({
+    cwd: z.string(),
+    entries: z.array(StashEntrySchema),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -2556,9 +2675,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutCommitResponseSchema,
   CheckoutMergeResponseSchema,
   CheckoutMergeFromBaseResponseSchema,
+  CheckoutPullResponseSchema,
   CheckoutPushResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrStatusResponseSchema,
+  CheckoutSwitchBranchResponseSchema,
+  StashSaveResponseSchema,
+  StashPopResponseSchema,
+  StashListResponseSchema,
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
   DirectorySuggestionsResponseSchema,
@@ -2626,7 +2750,9 @@ export type ProjectCheckoutLitePayload = z.infer<typeof ProjectCheckoutLitePaylo
 export type ProjectPlacementPayload = z.infer<typeof ProjectPlacementPayloadSchema>;
 export type WorkspaceStateBucket = z.infer<typeof WorkspaceStateBucketSchema>;
 export type WorkspaceDescriptorPayload = z.infer<typeof WorkspaceDescriptorPayloadSchema>;
-export type EditorTargetId = z.infer<typeof EditorTargetIdSchema>;
+export type KnownEditorTargetId = z.infer<typeof KnownEditorTargetIdSchema>;
+export type LegacyEditorTargetId = z.infer<typeof LegacyEditorTargetIdSchema>;
+export type EditorTargetId = LiteralUnion<KnownEditorTargetId, string>;
 export type EditorTargetDescriptorPayload = z.infer<typeof EditorTargetDescriptorPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
@@ -2766,12 +2892,23 @@ export type CheckoutMergeRequest = z.infer<typeof CheckoutMergeRequestSchema>;
 export type CheckoutMergeResponse = z.infer<typeof CheckoutMergeResponseSchema>;
 export type CheckoutMergeFromBaseRequest = z.infer<typeof CheckoutMergeFromBaseRequestSchema>;
 export type CheckoutMergeFromBaseResponse = z.infer<typeof CheckoutMergeFromBaseResponseSchema>;
+export type CheckoutPullRequest = z.infer<typeof CheckoutPullRequestSchema>;
+export type CheckoutPullResponse = z.infer<typeof CheckoutPullResponseSchema>;
 export type CheckoutPushRequest = z.infer<typeof CheckoutPushRequestSchema>;
 export type CheckoutPushResponse = z.infer<typeof CheckoutPushResponseSchema>;
 export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;
 export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
+export type CheckoutSwitchBranchRequest = z.infer<typeof CheckoutSwitchBranchRequestSchema>;
+export type CheckoutSwitchBranchResponse = z.infer<typeof CheckoutSwitchBranchResponseSchema>;
+export type StashSaveRequest = z.infer<typeof StashSaveRequestSchema>;
+export type StashSaveResponse = z.infer<typeof StashSaveResponseSchema>;
+export type StashPopRequest = z.infer<typeof StashPopRequestSchema>;
+export type StashPopResponse = z.infer<typeof StashPopResponseSchema>;
+export type StashListRequest = z.infer<typeof StashListRequestSchema>;
+export type StashListResponse = z.infer<typeof StashListResponseSchema>;
+export type StashEntry = z.infer<typeof StashEntrySchema>;
 export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
 export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSchema>;

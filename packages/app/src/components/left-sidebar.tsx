@@ -5,8 +5,8 @@ import {
   useState,
   useEffect,
   useRef,
-  useSyncExternalStore,
   type Dispatch,
+  type ReactElement,
   type RefObject,
   type SetStateAction,
 } from "react";
@@ -44,13 +44,13 @@ import {
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { Combobox } from "@/components/ui/combobox";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import { formatConnectionStatus } from "@/utils/daemons";
 import {
   HEADER_INNER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
-  isCompactFormFactor,
+  useIsCompactFormFactor,
 } from "@/constants/layout";
 import {
   buildHostSessionsRoute,
@@ -69,18 +69,12 @@ interface LeftSidebarProps {
   selectedAgentId?: string;
 }
 
-interface HostOption {
-  id: string;
-  label: string;
-  description: string;
-}
-
 interface SidebarSharedProps {
   theme: SidebarTheme;
   activeServerId: string | null;
   activeHostLabel: string;
   activeHostStatusColor: string;
-  hostOptions: HostOption[];
+  hostOptions: ComboboxOption[];
   hostTriggerRef: RefObject<View | null>;
   isHostPickerOpen: boolean;
   setIsHostPickerOpen: Dispatch<SetStateAction<boolean>>;
@@ -95,6 +89,12 @@ interface SidebarSharedProps {
   handleHostSelect: (nextServerId: string) => void;
   handleOpenProject: () => void;
   handleSettings: () => void;
+  renderHostOption: (input: {
+    option: ComboboxOption;
+    selected: boolean;
+    active: boolean;
+    onPress: () => void;
+  }) => ReactElement;
 }
 
 interface MobileSidebarProps extends SidebarSharedProps {
@@ -118,34 +118,12 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const isCompactLayout = isCompactFormFactor();
+  const isCompactLayout = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
   const pathname = usePathname();
   const daemons = useHosts();
-  const runtime = getHostRuntimeStore();
-  const runtimeConnectionStatusSignature = useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () =>
-      daemons
-        .map(
-          (daemon) =>
-            `${daemon.serverId}:${
-              runtime.getSnapshot(daemon.serverId)?.connectionStatus ?? "connecting"
-            }`,
-        )
-        .join("|"),
-    () =>
-      daemons
-        .map(
-          (daemon) =>
-            `${daemon.serverId}:${
-              runtime.getSnapshot(daemon.serverId)?.connectionStatus ?? "connecting"
-            }`,
-        )
-        .join("|"),
-  );
   const activeServerIdFromPath = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
   const activeDaemon = useMemo(() => {
     if (daemons.length === 0) {
@@ -165,8 +143,9 @@ export const LeftSidebar = memo(function LeftSidebar({
     const trimmed = activeDaemon.label?.trim();
     return trimmed && trimmed.length > 0 ? trimmed : activeDaemon.serverId;
   }, [activeDaemon]);
+  const activeHostSnapshot = useHostRuntimeSnapshot(activeServerId ?? "");
   const activeHostStatus = activeServerId
-    ? (runtime.getSnapshot(activeServerId)?.connectionStatus ?? "connecting")
+    ? (activeHostSnapshot?.connectionStatus ?? "connecting")
     : "idle";
   const activeHostStatusColor =
     activeHostStatus === "online"
@@ -179,11 +158,25 @@ export const LeftSidebar = memo(function LeftSidebar({
       daemons.map((daemon) => ({
         id: daemon.serverId,
         label: daemon.label?.trim() || daemon.serverId,
-        description: formatConnectionStatus(
-          runtime.getSnapshot(daemon.serverId)?.connectionStatus ?? "connecting",
-        ),
       })),
-    [daemons, runtime, runtimeConnectionStatusSignature],
+    [daemons],
+  );
+  const renderHostOption = useCallback(
+    ({ option, selected, active, onPress }: {
+      option: ComboboxOption;
+      selected: boolean;
+      active: boolean;
+      onPress: () => void;
+    }) => (
+      <HostSwitchOption
+        serverId={option.id}
+        label={option.label}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+      />
+    ),
+    [],
   );
   const hostTriggerRef = useRef<View | null>(null);
   const [isHostPickerOpen, setIsHostPickerOpen] = useState(false);
@@ -229,21 +222,21 @@ export const LeftSidebar = memo(function LeftSidebar({
       return;
     }
     closeToAgent();
-    router.push(buildHostSettingsRoute(activeServerId) as any);
+    router.push(buildHostSettingsRoute(activeServerId));
   }, [activeServerId, closeToAgent]);
 
   const handleSettingsDesktop = useCallback(() => {
     if (!activeServerId) {
       return;
     }
-    router.push(buildHostSettingsRoute(activeServerId) as any);
+    router.push(buildHostSettingsRoute(activeServerId));
   }, [activeServerId]);
 
   const handleViewMoreNavigate = useCallback(() => {
     if (!activeServerId) {
       return;
     }
-    router.push(buildHostSessionsRoute(activeServerId) as any);
+    router.push(buildHostSessionsRoute(activeServerId));
   }, [activeServerId]);
 
   const handleHostSelect = useCallback(
@@ -253,7 +246,7 @@ export const LeftSidebar = memo(function LeftSidebar({
       }
       const nextPath = mapPathnameToServer(pathname, nextServerId);
       setIsHostPickerOpen(false);
-      router.push(nextPath as any);
+      router.push(nextPath);
     },
     [pathname],
   );
@@ -276,6 +269,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     toggleProjectCollapsed,
     handleRefresh,
     handleHostSelect,
+    renderHostOption,
   };
 
   if (isCompactLayout) {
@@ -304,6 +298,33 @@ export const LeftSidebar = memo(function LeftSidebar({
     />
   );
 });
+
+function HostSwitchOption({
+  serverId,
+  label,
+  selected,
+  active,
+  onPress,
+}: {
+  serverId: string;
+  label: string;
+  selected: boolean;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const snapshot = useHostRuntimeSnapshot(serverId);
+  const connectionStatus = snapshot?.connectionStatus ?? "connecting";
+
+  return (
+    <ComboboxItem
+      label={label}
+      description={formatConnectionStatus(connectionStatus)}
+      selected={selected}
+      active={active}
+      onPress={onPress}
+    />
+  );
+}
 
 function SessionsButton({ onPress }: { onPress: () => void }) {
   const { theme } = useUnistyles();
@@ -361,6 +382,7 @@ function MobileSidebar({
   toggleProjectCollapsed,
   handleRefresh,
   handleHostSelect,
+  renderHostOption,
   handleOpenProject,
   handleSettings,
   insetsTop,
@@ -606,6 +628,7 @@ function MobileSidebar({
                 options={hostOptions}
                 value={activeServerId ?? ""}
                 onSelect={handleHostSelect}
+                renderOption={renderHostOption}
                 searchable={false}
                 title="Switch host"
                 searchPlaceholder="Search hosts..."
@@ -639,6 +662,7 @@ function DesktopSidebar({
   toggleProjectCollapsed,
   handleRefresh,
   handleHostSelect,
+  renderHostOption,
   handleOpenProject,
   handleSettings,
   insetsTop,
@@ -789,6 +813,7 @@ function DesktopSidebar({
           options={hostOptions}
           value={activeServerId ?? ""}
           onSelect={handleHostSelect}
+          renderOption={renderHostOption}
           searchable={false}
           title="Switch host"
           searchPlaceholder="Search hosts..."
@@ -885,10 +910,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   newAgentButtonHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   newAgentButtonActive: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   hostTrigger: {
     flexDirection: "row",
@@ -901,7 +926,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
   },
   hostTriggerHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   hostStatusDot: {
     width: 8,

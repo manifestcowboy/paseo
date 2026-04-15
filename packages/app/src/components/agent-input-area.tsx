@@ -1,6 +1,7 @@
 import { View, Pressable, Text, ActivityIndicator, Platform } from "react-native";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
 import { ArrowUp, Square, Pencil, AudioLines } from "lucide-react-native";
 import Animated from "react-native-reanimated";
@@ -48,6 +49,7 @@ import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { submitAgentInput } from "@/components/agent-input-submit";
+import { useAppSettings } from "@/hooks/use-settings";
 
 type QueuedMessage = {
   id: string;
@@ -131,6 +133,8 @@ export function AgentInputArea({
       agentDirectoryStatus === "revalidating" ||
       agentDirectoryStatus === "error_after_ready");
 
+  const { settings: appSettings } = useAppSettings();
+
   const agentState = useSessionStore(
     useShallow((state) => {
       const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
@@ -151,10 +155,8 @@ export function AgentInputArea({
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
-  const isDesktopWebBreakpoint =
-    Platform.OS === "web" &&
-    UnistylesRuntime.breakpoint !== "xs" &&
-    UnistylesRuntime.breakpoint !== "sm";
+  const isMobile = useIsCompactFormFactor();
+  const isDesktopWebBreakpoint = Platform.OS === "web" && !isMobile;
   const messagePlaceholder = isDesktopWebBreakpoint
     ? DESKTOP_MESSAGE_PLACEHOLDER
     : MOBILE_MESSAGE_PLACEHOLDER;
@@ -742,6 +744,7 @@ export function AgentInputArea({
               voiceServerId={serverId}
               voiceAgentId={agentId}
               isAgentRunning={isAgentRunning}
+              defaultSendBehavior={appSettings.sendBehavior}
               onQueue={handleQueue}
               onSubmitLoadingPress={isAgentRunning ? handleCancelAgent : undefined}
               onKeyPress={handleCommandKeyPress}

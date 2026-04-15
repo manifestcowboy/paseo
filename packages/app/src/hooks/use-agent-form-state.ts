@@ -93,6 +93,7 @@ type UseAgentFormStateResult = {
   isModelLoading: boolean;
   modelError: string | null;
   refreshProviderModels: () => void;
+  invalidateProviderModels: () => void;
   setProviderAndModelFromUser: (provider: AgentProvider, modelId: string) => void;
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
@@ -375,6 +376,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     isFetching: snapshotIsFetching,
     error: snapshotError,
     refresh: refreshSnapshot,
+    invalidate: invalidateSnapshot,
   } = useProvidersSnapshot(formState.serverId);
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
@@ -648,33 +650,36 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     refreshSnapshot();
   }, [refreshSnapshot]);
 
+  const invalidateProviderModels = useCallback(() => {
+    invalidateSnapshot();
+  }, [invalidateSnapshot]);
+
   const persistFormPreferences = useCallback(async () => {
     const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
     const modelId = resolvedModel?.id ?? formState.model;
-    const nextPreferences = mergeProviderPreferences({
-      preferences: preferences ?? {},
-      provider: formState.provider,
-      updates: {
-        model: modelId || undefined,
-        mode: formState.modeId || undefined,
-        ...(modelId && formState.thinkingOptionId
-          ? {
-              thinkingByModel: {
-                [modelId]: formState.thinkingOptionId,
-              },
-            }
-          : {}),
-      } satisfies Partial<ProviderPreferences>,
-    });
-
-    await updatePreferences(nextPreferences);
+    await updatePreferences((current) =>
+      mergeProviderPreferences({
+        preferences: current,
+        provider: formState.provider,
+        updates: {
+          model: modelId || undefined,
+          mode: formState.modeId || undefined,
+          ...(modelId && formState.thinkingOptionId
+            ? {
+                thinkingByModel: {
+                  [modelId]: formState.thinkingOptionId,
+                },
+              }
+            : {}),
+        } satisfies Partial<ProviderPreferences>,
+      }),
+    );
   }, [
     availableModels,
     formState.model,
     formState.modeId,
     formState.provider,
     formState.thinkingOptionId,
-    preferences?.providerPreferences,
     updatePreferences,
   ]);
 
@@ -715,6 +720,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       isModelLoading,
       modelError,
       refreshProviderModels,
+      invalidateProviderModels,
       setProviderAndModelFromUser,
       workingDirIsEmpty,
       persistFormPreferences,
@@ -746,6 +752,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       isModelLoading,
       modelError,
       refreshProviderModels,
+      invalidateProviderModels,
       setProviderAndModelFromUser,
       workingDirIsEmpty,
       persistFormPreferences,

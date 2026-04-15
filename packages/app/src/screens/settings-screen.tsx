@@ -10,20 +10,22 @@ import {
   Sun,
   Moon,
   Monitor,
+  ChevronDown,
   Globe,
   Settings,
   RotateCw,
   Trash2,
   Server,
-  Palette,
   Keyboard,
   Stethoscope,
   Info,
   Shield,
   Puzzle,
   Blocks,
+  Smartphone,
 } from "lucide-react-native";
-import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
+import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
+import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
 import type { HostProfile, HostConnection } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
@@ -41,19 +43,20 @@ import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
-import { NameHostModal } from "@/components/name-host-modal";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { PairDeviceSection } from "@/desktop/components/pair-device-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -63,7 +66,7 @@ import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pc
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { isCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet";
@@ -75,14 +78,15 @@ import { StatusBadge } from "@/components/ui/status-badge";
 
 type SettingsSectionId =
   | "hosts"
-  | "appearance"
+  | "general"
   | "shortcuts"
   | "integrations"
   | "providers"
   | "diagnostics"
   | "about"
   | "permissions"
-  | "daemon";
+  | "daemon"
+  | "pair-device";
 
 interface SettingsSectionDef {
   id: SettingsSectionId;
@@ -93,20 +97,21 @@ interface SettingsSectionDef {
 function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectionDef[] {
   const sections: SettingsSectionDef[] = [
     { id: "hosts", label: "Hosts", icon: Server },
-    { id: "appearance", label: "Appearance", icon: Palette },
-    { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+    { id: "general", label: "General", icon: Settings },
     { id: "permissions", label: "Permissions", icon: Shield },
   ];
 
   if (context.isDesktopApp) {
     sections.push(
+      { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
       { id: "integrations", label: "Integrations", icon: Puzzle },
+      { id: "pair-device", label: "Pair device", icon: Smartphone },
       { id: "daemon", label: "Daemon", icon: Settings },
+      { id: "providers", label: "Providers", icon: Blocks },
     );
   }
 
   sections.push(
-    { id: "providers", label: "Providers", icon: Blocks },
     { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
     { id: "about", label: "About", icon: Info },
   );
@@ -200,10 +205,6 @@ interface HostsSectionProps {
   goBackToAddConnectionMethods: () => void;
   setIsDirectHostVisible: (visible: boolean) => void;
   setIsPasteLinkVisible: (visible: boolean) => void;
-  pendingNameHost: { serverId: string; hostname: string | null } | null;
-  setPendingNameHost: (host: { serverId: string; hostname: string | null } | null) => void;
-  pendingNameHostname: string | null;
-  renameHost: (serverId: string, label: string) => Promise<void>;
   pendingRemoveHost: HostProfile | null;
   setPendingRemoveHost: (host: HostProfile | null) => void;
   isRemovingHost: boolean;
@@ -286,37 +287,13 @@ function HostsSection(props: HostsSectionProps) {
         visible={props.isDirectHostVisible}
         onClose={props.closeAddConnectionFlow}
         onCancel={props.goBackToAddConnectionMethods}
-        onSaved={({ serverId, hostname, isNewHost }) => {
-          if (isNewHost) {
-            props.setPendingNameHost({ serverId, hostname });
-          }
-        }}
       />
 
       <PairLinkModal
         visible={props.isPasteLinkVisible}
         onClose={props.closeAddConnectionFlow}
         onCancel={props.goBackToAddConnectionMethods}
-        onSaved={({ serverId, hostname, isNewHost }) => {
-          if (isNewHost) {
-            props.setPendingNameHost({ serverId, hostname });
-          }
-        }}
       />
-
-      {props.pendingNameHost ? (
-        <NameHostModal
-          visible
-          serverId={props.pendingNameHost.serverId}
-          hostname={props.pendingNameHostname}
-          onSkip={() => props.setPendingNameHost(null)}
-          onSave={(label) => {
-            void props.renameHost(props.pendingNameHost!.serverId, label).finally(() => {
-              props.setPendingNameHost(null);
-            });
-          }}
-        />
-      ) : null}
 
       {props.pendingRemoveHost ? (
         <AdaptiveModalSheet
@@ -382,41 +359,119 @@ function HostsSection(props: HostsSectionProps) {
   );
 }
 
-interface AppearanceSectionProps {
+interface GeneralSectionProps {
   settings: AppSettings;
   handleThemeChange: (theme: AppSettings["theme"]) => void;
+  handleSendBehaviorChange: (behavior: SendBehavior) => void;
 }
 
-function AppearanceSection({ settings, handleThemeChange }: AppearanceSectionProps) {
+function ThemeIcon({ theme, size, color }: { theme: AppSettings["theme"]; size: number; color: string }) {
+  switch (theme) {
+    case "light":
+      return <Sun size={size} color={color} />;
+    case "dark":
+      return <Moon size={size} color={color} />;
+    case "auto":
+      return <Monitor size={size} color={color} />;
+    default:
+      return <ThemeSwatch color={THEME_SWATCHES[theme]} size={size} />;
+  }
+}
+
+function ThemeSwatch({ color, size }: { color: string; size: number }) {
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: color,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.15)",
+      }}
+    />
+  );
+}
+
+const THEME_LABELS: Record<AppSettings["theme"], string> = {
+  light: "Light",
+  dark: "Dark",
+  zinc: "Zinc",
+  midnight: "Midnight",
+  claude: "Claude",
+  ghostty: "Ghostty",
+  auto: "System",
+};
+
+function GeneralSection({
+  settings,
+  handleThemeChange,
+  handleSendBehaviorChange,
+}: GeneralSectionProps) {
+  const { theme } = useUnistyles();
+  const iconSize = theme.iconSize.md;
+  const iconColor = theme.colors.foregroundMuted;
+
   return (
     <View style={settingsStyles.section}>
-      <Text style={settingsStyles.sectionTitle}>Appearance</Text>
+      <Text style={settingsStyles.sectionTitle}>General</Text>
       <View style={[settingsStyles.card, styles.audioCard]}>
         <View style={styles.audioRow}>
           <View style={styles.audioRowContent}>
             <Text style={styles.audioRowTitle}>Theme</Text>
           </View>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              style={({ pressed }) => [
+                styles.themeTrigger,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <ThemeIcon theme={settings.theme} size={iconSize} color={iconColor} />
+              <Text style={styles.themeTriggerText}>
+                {THEME_LABELS[settings.theme]}
+              </Text>
+              <ChevronDown size={theme.iconSize.sm} color={iconColor} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={200}>
+              {(["light", "dark", "auto"] as const).map((t) => (
+                <DropdownMenuItem
+                  key={t}
+                  selected={settings.theme === t}
+                  onSelect={() => handleThemeChange(t)}
+                  leading={<ThemeIcon theme={t} size={iconSize} color={iconColor} />}
+                >
+                  {THEME_LABELS[t]}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              {(["zinc", "midnight", "claude", "ghostty"] as const).map((t) => (
+                <DropdownMenuItem
+                  key={t}
+                  selected={settings.theme === t}
+                  onSelect={() => handleThemeChange(t)}
+                  leading={<ThemeIcon theme={t} size={iconSize} color={iconColor} />}
+                >
+                  {THEME_LABELS[t]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </View>
+        <View style={styles.audioRow}>
+          <View style={styles.audioRowContent}>
+            <Text style={styles.audioRowTitle}>Default send</Text>
+            <Text style={styles.audioRowSubtitle}>
+              What happens when you press Enter while the agent is running
+            </Text>
+          </View>
           <SegmentedControl
             size="sm"
-            hideLabels={Platform.OS !== "web"}
-            value={settings.theme}
-            onValueChange={handleThemeChange}
+            value={settings.sendBehavior}
+            onValueChange={handleSendBehaviorChange}
             options={[
-              {
-                value: "light",
-                label: "Light",
-                icon: ({ color, size }) => <Sun size={size} color={color} />,
-              },
-              {
-                value: "dark",
-                label: "Dark",
-                icon: ({ color, size }) => <Moon size={size} color={color} />,
-              },
-              {
-                value: "auto",
-                label: "System",
-                icon: ({ color, size }) => <Monitor size={size} color={color} />,
-              },
+              { value: "interrupt", label: "Interrupt" },
+              { value: "queue", label: "Queue" },
             ]}
           />
         </View>
@@ -610,7 +665,7 @@ function AboutSection({ appVersionText, isDesktopApp }: AboutSectionProps) {
 interface SettingsSectionContentProps {
   sectionId: SettingsSectionId;
   hostsProps: HostsSectionProps;
-  appearanceProps: AppearanceSectionProps;
+  generalProps: GeneralSectionProps;
   providersProps: ProvidersSectionProps;
   diagnosticsProps: DiagnosticsSectionProps;
   aboutProps: AboutSectionProps;
@@ -622,7 +677,7 @@ interface SettingsSectionContentProps {
 function SettingsSectionContent({
   sectionId,
   hostsProps,
-  appearanceProps,
+  generalProps,
   providersProps,
   diagnosticsProps,
   aboutProps,
@@ -633,8 +688,8 @@ function SettingsSectionContent({
   switch (sectionId) {
     case "hosts":
       return <HostsSection {...hostsProps} />;
-    case "appearance":
-      return <AppearanceSection {...appearanceProps} />;
+    case "general":
+      return <GeneralSection {...generalProps} />;
     case "shortcuts":
       return <KeyboardShortcutsSection />;
     case "providers":
@@ -647,6 +702,8 @@ function SettingsSectionContent({
       return isDesktopApp ? <IntegrationsSection /> : null;
     case "permissions":
       return isDesktopApp ? <DesktopPermissionsSection /> : null;
+    case "pair-device":
+      return isDesktopApp ? <PairDeviceSection /> : null;
     case "daemon":
       return isDesktopApp ? (
         <LocalDaemonSection appVersion={appVersion} showLifecycleControls={isLocalDaemon} />
@@ -809,7 +866,7 @@ function DesktopAppUpdateRow() {
         <Text style={styles.aboutHintText}>{statusText}</Text>
         {availableUpdate?.latestVersion ? (
           <Text style={styles.aboutHintText}>
-            New version available: {formatVersionWithPrefix(availableUpdate.latestVersion)}
+            Ready to install: {formatVersionWithPrefix(availableUpdate.latestVersion)}
           </Text>
         ) : null}
         {errorMessage ? <Text style={styles.aboutErrorText}>{errorMessage}</Text> : null}
@@ -857,10 +914,6 @@ export default function SettingsScreen() {
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
-  const [pendingNameHost, setPendingNameHost] = useState<{
-    serverId: string;
-    hostname: string | null;
-  } | null>(null);
   const [pendingRemoveHost, setPendingRemoveHost] = useState<HostProfile | null>(null);
   const [isRemovingHost, setIsRemovingHost] = useState(false);
   const [editingDaemon, setEditingDaemon] = useState<HostProfile | null>(null);
@@ -878,19 +931,6 @@ export default function SettingsScreen() {
   const editingDaemonLive = editingServerId
     ? (daemons.find((daemon) => daemon.serverId === editingServerId) ?? null)
     : null;
-  const pendingNameHostname = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!pendingNameHost) return null;
-        return (
-          state.sessions[pendingNameHost.serverId]?.serverInfo?.hostname ??
-          pendingNameHost.hostname ??
-          null
-        );
-      },
-      [pendingNameHost],
-    ),
-  );
 
   useEffect(() => {
     return () => {
@@ -997,6 +1037,13 @@ export default function SettingsScreen() {
     [updateSettings],
   );
 
+  const handleSendBehaviorChange = useCallback(
+    (behavior: SendBehavior) => {
+      void updateSettings({ sendBehavior: behavior });
+    },
+    [updateSettings],
+  );
+
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1026,7 +1073,7 @@ export default function SettingsScreen() {
     }
   }, [isPlaybackTestRunning, voiceAudioEngine]);
 
-  const isCompactLayout = isCompactFormFactor();
+  const isCompactLayout = useIsCompactFormFactor();
   const sections = getSettingsSections({ isDesktopApp });
 
   const hostsProps: HostsSectionProps = {
@@ -1043,10 +1090,6 @@ export default function SettingsScreen() {
     goBackToAddConnectionMethods,
     setIsDirectHostVisible,
     setIsPasteLinkVisible,
-    pendingNameHost,
-    setPendingNameHost,
-    pendingNameHostname,
-    renameHost,
     pendingRemoveHost,
     setPendingRemoveHost,
     isRemovingHost,
@@ -1063,9 +1106,10 @@ export default function SettingsScreen() {
     isMountedRef,
   };
 
-  const appearanceProps: AppearanceSectionProps = {
+  const generalProps: GeneralSectionProps = {
     settings,
     handleThemeChange,
+    handleSendBehaviorChange,
   };
 
   const diagnosticsProps: DiagnosticsSectionProps = {
@@ -1086,7 +1130,7 @@ export default function SettingsScreen() {
 
   const sectionContentProps: Omit<SettingsSectionContentProps, "sectionId"> = {
     hostsProps,
-    appearanceProps,
+    generalProps,
     providersProps,
     diagnosticsProps,
     aboutProps,
@@ -1821,6 +1865,20 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
+  themeTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  themeTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
   disabled: {
     opacity: theme.opacity[50],
   },
@@ -1894,6 +1952,11 @@ const styles = StyleSheet.create((theme) => ({
   audioRowTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  audioRowSubtitle: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[1],
   },
   providerActions: {
     flexDirection: "row",

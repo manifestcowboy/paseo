@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { ActivityIndicator, Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import * as QRCode from "qrcode";
-import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
 import {
@@ -12,7 +10,6 @@ import {
   RotateCw,
   Copy,
   FileText,
-  Smartphone,
   Activity,
 } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -23,17 +20,12 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
 import {
   getCliDaemonStatus,
-  getDesktopDaemonLogs,
-  getDesktopDaemonPairing,
-  getDesktopDaemonStatus,
   restartDesktopDaemon,
   shouldUseDesktopDaemon,
   startDesktopDaemon,
   stopDesktopDaemon,
-  type DesktopDaemonLogs,
-  type DesktopDaemonStatus,
-  type DesktopPairingOffer,
 } from "@/desktop/daemon/desktop-daemon";
+import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 
 export interface LocalDaemonSectionProps {
   appVersion: string | null;
@@ -44,48 +36,18 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
   const { theme } = useUnistyles();
   const showSection = shouldUseDesktopDaemon();
   const { settings, updateSettings } = useAppSettings();
-  const [daemonStatus, setDaemonStatus] = useState<DesktopDaemonStatus | null>(null);
-  const [daemonVersion, setDaemonVersion] = useState<string | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const { data, isLoading, error: statusError, setStatus, refetch } = useDaemonStatus();
   const [isRestartingDaemon, setIsRestartingDaemon] = useState(false);
   const [isUpdatingDaemonManagement, setIsUpdatingDaemonManagement] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
-  const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
-  const [isLoadingPairing, setIsLoadingPairing] = useState(false);
-  const [pairingOffer, setPairingOffer] = useState<DesktopPairingOffer | null>(null);
-  const [pairingStatusMessage, setPairingStatusMessage] = useState<string | null>(null);
   const [cliStatusOutput, setCliStatusOutput] = useState<string | null>(null);
   const [isCliStatusModalOpen, setIsCliStatusModalOpen] = useState(false);
   const [isLoadingCliStatus, setIsLoadingCliStatus] = useState(false);
 
-  const loadDaemonData = useCallback(() => {
-    if (!showSection) {
-      return Promise.resolve();
-    }
-    return Promise.all([getDesktopDaemonStatus(), getDesktopDaemonLogs()])
-      .then(([status, logs]) => {
-        setDaemonStatus(status);
-        setDaemonLogs(logs);
-        setDaemonVersion(status.version);
-        setStatusError(null);
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setStatusError(message);
-      });
-  }, [showSection]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!showSection) {
-        return undefined;
-      }
-      void loadDaemonData();
-      return undefined;
-    }, [loadDaemonData, showSection]),
-  );
+  const daemonStatus = data?.status ?? null;
+  const daemonLogs = data?.logs ?? null;
+  const daemonVersion = daemonStatus?.version ?? null;
 
   const daemonVersionMismatch = isVersionMismatch(appVersion, daemonVersion);
   const daemonStatusStateText =
@@ -124,12 +86,12 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
           daemonStatus?.status === "running" ? restartDesktopDaemon : startDesktopDaemon;
 
         void action()
-          .then((status) => {
-            setDaemonStatus(status);
+          .then((newStatus) => {
+            setStatus(newStatus);
             setStatusMessage(
               daemonStatus?.status === "running" ? "Daemon restarted." : "Daemon started.",
             );
-            return loadDaemonData();
+            refetch();
           })
           .catch((error) => {
             console.error("[Settings] Failed to change desktop daemon state", error);
@@ -144,7 +106,7 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         console.error("[Settings] Failed to open desktop daemon action confirmation", error);
         Alert.alert("Error", "Unable to open the daemon confirmation dialog.");
       });
-  }, [daemonActionLabel, daemonStatus?.status, isRestartingDaemon, loadDaemonData, showSection]);
+  }, [daemonActionLabel, daemonStatus?.status, isRestartingDaemon, refetch, setStatus, showSection]);
 
   const handleToggleDaemonManagement = useCallback(() => {
     if (isUpdatingDaemonManagement) {
@@ -190,9 +152,14 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
             : Promise.resolve(daemonStatus ?? null);
 
         void stopPromise
-          .then(() => updateSettings({ manageBuiltInDaemon: false }))
-          .then(() => loadDaemonData())
+          .then((newStatus) => {
+            if (newStatus) {
+              setStatus(newStatus);
+            }
+            return updateSettings({ manageBuiltInDaemon: false });
+          })
           .then(() => {
+            refetch();
             setStatusMessage("Built-in daemon paused and stopped.");
           })
           .catch((error) => {
@@ -210,7 +177,8 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
   }, [
     daemonStatus,
     isUpdatingDaemonManagement,
-    loadDaemonData,
+    refetch,
+    setStatus,
     settings.manageBuiltInDaemon,
     updateSettings,
   ]);
@@ -237,46 +205,6 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
     }
     setIsLogsModalOpen(true);
   }, [daemonLogs]);
-
-  const handleOpenPairingModal = useCallback(() => {
-    if (isLoadingPairing) {
-      return;
-    }
-
-    setIsPairingModalOpen(true);
-    setIsLoadingPairing(true);
-    setPairingStatusMessage(null);
-
-    void getDesktopDaemonPairing()
-      .then((pairing) => {
-        setPairingOffer(pairing);
-        if (!pairing.relayEnabled || !pairing.url) {
-          setPairingStatusMessage("Relay pairing is not available.");
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setPairingOffer(null);
-        setPairingStatusMessage(`Unable to load pairing offer: ${message}`);
-      })
-      .finally(() => {
-        setIsLoadingPairing(false);
-      });
-  }, [isLoadingPairing]);
-
-  const handleCopyPairingLink = useCallback(() => {
-    if (!pairingOffer?.url) {
-      return;
-    }
-    void Clipboard.setStringAsync(pairingOffer.url)
-      .then(() => {
-        Alert.alert("Copied", "Pairing link copied.");
-      })
-      .catch((error) => {
-        console.error("[Settings] Failed to copy pairing link", error);
-        Alert.alert("Error", "Unable to copy pairing link.");
-      });
-  }, [pairingOffer?.url]);
 
   const handleOpenCliStatus = useCallback(async () => {
     setIsLoadingCliStatus(true);
@@ -325,154 +253,138 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
           Advanced settings
         </Button>
       </View>
-      <View style={settingsStyles.card}>
-        <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Status</Text>
-            <Text style={settingsStyles.rowHint}>Only the built-in desktop daemon is shown here.</Text>
-          </View>
-          <View style={styles.statusValueGroup}>
-            <Text style={styles.valueText}>{daemonStatusStateText}</Text>
-            <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
-          </View>
+      {isLoading ? (
+        <View style={[settingsStyles.card, styles.loadingCard]}>
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
         </View>
-        {showLifecycleControls ? (
-          <>
+      ) : (
+        <>
+          <View style={settingsStyles.card}>
+            <View style={settingsStyles.row}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Status</Text>
+                <Text style={settingsStyles.rowHint}>
+                  Only the built-in desktop daemon is shown here.
+                </Text>
+              </View>
+              <View style={styles.statusValueGroup}>
+                <Text style={styles.valueText}>{daemonStatusStateText}</Text>
+                <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
+              </View>
+            </View>
+            {showLifecycleControls ? (
+              <>
+                <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+                  <View style={settingsStyles.rowContent}>
+                    <Text style={settingsStyles.rowTitle}>Daemon management</Text>
+                    <Text style={settingsStyles.rowHint}>
+                      {isDaemonManagementPaused
+                        ? "Paused. The built-in daemon stays stopped until you start it again."
+                        : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
+                    </Text>
+                  </View>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    leftIcon={
+                      isDaemonManagementPaused ? (
+                        <Play size={theme.iconSize.sm} color={theme.colors.foreground} />
+                      ) : (
+                        <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />
+                      )
+                    }
+                    onPress={handleToggleDaemonManagement}
+                    disabled={isUpdatingDaemonManagement}
+                  >
+                    {isUpdatingDaemonManagement
+                      ? isDaemonManagementPaused
+                        ? "Resuming..."
+                        : "Pausing..."
+                      : isDaemonManagementPaused
+                        ? "Resume"
+                        : "Pause"}
+                  </Button>
+                </View>
+                <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+                  <View style={settingsStyles.rowContent}>
+                    <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
+                    <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
+                    {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
+                  </View>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                    onPress={handleUpdateLocalDaemon}
+                    disabled={isRestartingDaemon}
+                  >
+                    {isRestartingDaemon
+                      ? daemonStatus?.status === "running"
+                        ? "Restarting..."
+                        : "Starting..."
+                      : daemonActionLabel}
+                  </Button>
+                </View>
+              </>
+            ) : null}
             <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
               <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>Daemon management</Text>
+                <Text style={settingsStyles.rowTitle}>Log file</Text>
                 <Text style={settingsStyles.rowHint}>
-                  {isDaemonManagementPaused
-                    ? "Paused. The built-in daemon stays stopped until you start it again."
-                    : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
+                  {daemonLogs?.logPath ?? "Log path unavailable."}
+                </Text>
+              </View>
+              <View style={styles.actionGroup}>
+                {daemonLogs?.logPath ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    leftIcon={<Copy size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                    onPress={handleCopyLogPath}
+                  >
+                    Copy path
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<FileText size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                  onPress={handleOpenLogs}
+                  disabled={!daemonLogs}
+                >
+                  Open logs
+                </Button>
+              </View>
+            </View>
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Full status</Text>
+                <Text style={settingsStyles.rowHint}>
+                  Runs `paseo daemon status` and shows the output.
                 </Text>
               </View>
               <Button
                 variant="outline"
                 size="sm"
-                leftIcon={
-                  isDaemonManagementPaused ? (
-                    <Play size={theme.iconSize.sm} color={theme.colors.foreground} />
-                  ) : (
-                    <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />
-                  )
-                }
-                onPress={handleToggleDaemonManagement}
-                disabled={isUpdatingDaemonManagement}
+                leftIcon={<Activity size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                onPress={() => void handleOpenCliStatus()}
+                disabled={isLoadingCliStatus}
               >
-                {isUpdatingDaemonManagement
-                  ? isDaemonManagementPaused
-                    ? "Resuming..."
-                    : "Pausing..."
-                  : isDaemonManagementPaused
-                    ? "Resume"
-                    : "Pause"}
+                {isLoadingCliStatus ? "Loading..." : "View status"}
               </Button>
             </View>
-            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-              <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
-                <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
-                {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
-              </View>
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-                onPress={handleUpdateLocalDaemon}
-                disabled={isRestartingDaemon}
-              >
-                {isRestartingDaemon
-                  ? daemonStatus?.status === "running"
-                    ? "Restarting..."
-                    : "Starting..."
-                  : daemonActionLabel}
-              </Button>
+          </View>
+
+          {daemonVersionMismatch ? (
+            <View style={styles.warningCard}>
+              <Text style={styles.warningText}>
+                App and daemon versions don't match. Update both to the same version for the best
+                experience.
+              </Text>
             </View>
-          </>
-        ) : null}
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Log file</Text>
-            <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
-          </View>
-          <View style={styles.actionGroup}>
-            {daemonLogs?.logPath ? (
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={<Copy size={theme.iconSize.sm} color={theme.colors.foreground} />}
-                onPress={handleCopyLogPath}
-              >
-                Copy path
-              </Button>
-            ) : null}
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<FileText size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={handleOpenLogs}
-              disabled={!daemonLogs}
-            >
-              Open logs
-            </Button>
-          </View>
-        </View>
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Pair device</Text>
-            <Text style={settingsStyles.rowHint}>Connect your phone to this computer.</Text>
-          </View>
-          <Button
-            variant="outline"
-            size="sm"
-            leftIcon={<Smartphone size={theme.iconSize.sm} color={theme.colors.foreground} />}
-            onPress={handleOpenPairingModal}
-          >
-            Pair device
-          </Button>
-        </View>
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Full status</Text>
-            <Text style={settingsStyles.rowHint}>
-              Runs `paseo daemon status` and shows the output.
-            </Text>
-          </View>
-          <Button
-            variant="outline"
-            size="sm"
-            leftIcon={<Activity size={theme.iconSize.sm} color={theme.colors.foreground} />}
-            onPress={() => void handleOpenCliStatus()}
-            disabled={isLoadingCliStatus}
-          >
-            {isLoadingCliStatus ? "Loading..." : "View status"}
-          </Button>
-        </View>
-      </View>
-
-      {daemonVersionMismatch ? (
-        <View style={styles.warningCard}>
-          <Text style={styles.warningText}>
-            App and daemon versions don't match. Update both to the same version for the best
-            experience.
-          </Text>
-        </View>
-      ) : null}
-
-      <AdaptiveModalSheet
-        visible={isPairingModalOpen}
-        onClose={() => setIsPairingModalOpen(false)}
-        title="Pair device"
-        testID="managed-daemon-pairing-dialog"
-      >
-        <PairingOfferDialogContent
-          isLoading={isLoadingPairing}
-          pairingOffer={pairingOffer}
-          statusMessage={pairingStatusMessage}
-          onCopyLink={handleCopyPairingLink}
-        />
-      </AdaptiveModalSheet>
+          ) : null}
+        </>
+      )}
 
       <AdaptiveModalSheet
         visible={isLogsModalOpen}
@@ -516,113 +428,17 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
 
 const ADVANCED_DAEMON_SETTINGS_URL = "https://paseo.sh/docs/configuration";
 
-function PairingOfferDialogContent(input: {
-  isLoading: boolean;
-  pairingOffer: DesktopPairingOffer | null;
-  statusMessage: string | null;
-  onCopyLink: () => void;
-}) {
-  const { isLoading, pairingOffer, statusMessage, onCopyLink } = input;
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [qrError, setQrError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!pairingOffer?.url) {
-      setQrDataUrl(null);
-      setQrError(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setQrError(null);
-    setQrDataUrl(null);
-
-    void QRCode.toDataURL(pairingOffer.url, {
-      errorCorrectionLevel: "M",
-      margin: 1,
-      width: 480,
-    })
-      .then((dataUrl) => {
-        if (cancelled) {
-          return;
-        }
-        setQrDataUrl(dataUrl);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setQrError(error instanceof Error ? error.message : String(error));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pairingOffer?.url]);
-
-  if (isLoading) {
-    return (
-      <View style={styles.pairingState}>
-        <ActivityIndicator size="small" />
-        <Text style={settingsStyles.rowHint}>Loading pairing offer…</Text>
-      </View>
-    );
-  }
-
-  if (statusMessage) {
-    return (
-      <View style={styles.modalBody}>
-        <Text style={settingsStyles.rowHint}>{statusMessage}</Text>
-      </View>
-    );
-  }
-
-  if (!pairingOffer?.url) {
-    return (
-      <View style={styles.modalBody}>
-        <Text style={settingsStyles.rowHint}>Pairing offer unavailable.</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.modalBody}>
-      <Text style={settingsStyles.rowHint}>
-        Scan this QR code in Paseo, or copy the pairing link below.
-      </Text>
-      <View style={styles.qrCard}>
-        {qrDataUrl ? (
-          <Image source={{ uri: qrDataUrl }} style={styles.qrImage} resizeMode="contain" />
-        ) : qrError ? (
-          <Text style={settingsStyles.rowHint}>QR unavailable: {qrError}</Text>
-        ) : (
-          <ActivityIndicator size="small" />
-        )}
-      </View>
-      <View style={styles.linkSection}>
-        <Text style={styles.linkLabel}>Pairing link</Text>
-        <Text style={styles.linkText} selectable>
-          {pairingOffer.url}
-        </Text>
-      </View>
-      <View style={styles.modalActions}>
-        <Button variant="outline" size="sm" onPress={onCopyLink}>
-          Copy link
-        </Button>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create((theme) => ({
   actionGroup: {
     flexDirection: "row",
     gap: theme.spacing[2],
     flexWrap: "wrap",
     justifyContent: "flex-end",
+  },
+  loadingCard: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: theme.spacing[6],
   },
   statusValueGroup: {
     alignItems: "flex-end",
@@ -658,40 +474,6 @@ const styles = StyleSheet.create((theme) => ({
   modalBody: {
     gap: theme.spacing[3],
     paddingBottom: theme.spacing[2],
-  },
-  pairingState: {
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[3],
-    paddingVertical: theme.spacing[6],
-  },
-  qrCard: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    aspectRatio: 1,
-    alignSelf: "stretch",
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-  },
-  qrImage: {
-    width: "100%",
-    height: "100%",
-  },
-  linkSection: {
-    gap: theme.spacing[2],
-  },
-  linkLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  linkText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: 18,
   },
   logOutput: {
     color: theme.colors.foregroundMuted,

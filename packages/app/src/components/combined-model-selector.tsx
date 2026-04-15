@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   ArrowLeft,
   ChevronDown,
@@ -58,6 +59,7 @@ interface CombinedModelSelectorProps {
     disabled: boolean;
     isOpen: boolean;
   }) => React.ReactNode;
+  onOpen?: () => void;
   onClose?: () => void;
   disabled?: boolean;
 }
@@ -348,7 +350,8 @@ function ProviderSearchInput({
 }) {
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput>(null);
-  const InputComponent = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
+  const isMobile = useIsCompactFormFactor();
+  const InputComponent = isMobile ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
     if (autoFocus && Platform.OS === "web" && inputRef.current) {
@@ -515,6 +518,7 @@ export function CombinedModelSelector({
   favoriteKeys = new Set<string>(),
   onToggleFavorite,
   renderTrigger,
+  onOpen,
   onClose,
   disabled = false,
 }: CombinedModelSelectorProps) {
@@ -539,12 +543,14 @@ export function CombinedModelSelector({
     (open: boolean) => {
       setIsOpen(open);
       setView(singleProviderView ?? { kind: "all" });
-      if (!open) {
+      if (open) {
+        onOpen?.();
+      } else {
         setSearchQuery("");
         onClose?.();
       }
     },
-    [onClose, singleProviderView],
+    [onOpen, onClose, singleProviderView],
   );
 
   const handleSelect = useCallback(

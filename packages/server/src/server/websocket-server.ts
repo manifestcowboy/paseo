@@ -396,7 +396,7 @@ export class VoiceAssistantWebSocketServer {
           !!requestHost &&
           (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
 
-        if (!origin || allowedOrigins.has(origin) || sameOrigin) {
+        if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
           callback(true);
         } else {
           this.incrementRuntimeCounter("originRejected");
@@ -633,16 +633,6 @@ export class VoiceAssistantWebSocketServer {
           return;
         }
         this.sendBinaryToConnection(connection, frame);
-      },
-      getBinaryBufferedAmount: () => {
-        if (!connection) {
-          return 0;
-        }
-        let bufferedAmount = 0;
-        for (const socket of connection.sockets) {
-          bufferedAmount = Math.max(bufferedAmount, socket.bufferedAmount ?? 0);
-        }
-        return bufferedAmount;
       },
       onLifecycleIntent: (intent) => {
         this.onLifecycleIntent?.(intent);

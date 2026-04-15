@@ -44,7 +44,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
-import { getIsElectronRuntime, isCompactFormFactor } from "@/constants/layout";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
 import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
@@ -713,7 +713,7 @@ function ProjectHeaderRow({
 }: ProjectHeaderRowProps) {
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
-  const isMobileBreakpoint = isCompactFormFactor();
+  const isMobileBreakpoint = useIsCompactFormFactor();
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const toast = useToast();
 
@@ -1113,7 +1113,7 @@ function WorkspaceRowWithMenu({
         serverId: workspace.serverId,
         archivedWorkspaceId: workspace.workspaceId,
         workspaces: sessionWorkspaces.values(),
-      }) as any,
+      }),
     );
   }, [activeWorkspaceSelection, sessionWorkspaces, workspace.serverId, workspace.workspaceId]);
 
@@ -1606,7 +1606,7 @@ export function SidebarWorkspaceList({
   listFooterComponent,
   parentGestureRef,
 }: SidebarWorkspaceListProps) {
-  const isMobile = isCompactFormFactor();
+  const isMobile = useIsCompactFormFactor();
   const isNative = Platform.OS !== "web";
   const pathname = usePathname();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
@@ -1980,7 +1980,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   projectRowHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   projectRowPressed: {
     backgroundColor: theme.colors.surface2,
@@ -2050,7 +2050,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   projectActionButtonHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   projectActionButtonText: {
     color: theme.colors.foregroundMuted,
@@ -2065,7 +2065,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   projectIconActionButtonHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   projectIconActionButtonHidden: {
     opacity: 0,
@@ -2143,7 +2143,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   workspaceRowHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   workspaceRowPressed: {
     backgroundColor: theme.colors.surface2,
@@ -2157,7 +2157,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.shadow.md,
   },
   sidebarRowSelected: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   workspaceRowContainer: {
     position: "relative",
@@ -2241,12 +2241,12 @@ const styles = StyleSheet.create((theme) => ({
   diffStatAdditions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.green[400],
+    color: theme.colors.diffAddition,
   },
   diffStatDeletions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.red[500],
+    color: theme.colors.diffDeletion,
   },
   kebabButton: {
     padding: 2,

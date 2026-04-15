@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -79,14 +80,12 @@ import {
   applyProviderEnv,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../../../utils/executable.js";
+import { findExecutable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
+const execFileAsync = promisify(execFile);
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -225,26 +224,21 @@ function applyRuntimeSettingsToClaudeOptions(
       const isDefaultRuntime =
         resolved.command === "node" || resolved.command === "bun";
       const command = isDefaultRuntime ? process.execPath : resolved.command;
-      const child = spawn(
-        quoteWindowsCommand(command),
-        resolved.args.map((argument) => quoteWindowsArgument(argument)),
-        {
+      const child = spawnProcess(command, resolved.args, {
         cwd: spawnOptions.cwd,
         env: {
           ...applyProviderEnv(spawnOptions.env, runtimeSettings),
           ...(launchEnv ?? {}),
         },
-        shell: process.platform === "win32",
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
+      });
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
           options.stderr?.(chunk.toString());
         });
       }
-      return child;
+      return child as ChildProcessWithoutNullStreams;
     },
   };
 }
@@ -418,8 +412,19 @@ function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
   return normalizeClaudeTranscriptText(value) === NO_RESPONSE_REQUESTED_PLACEHOLDER;
 }
 
+const LOCAL_COMMAND_STDOUT_PATTERN = /^\s*<local-command-stdout>[\s\S]*<\/local-command-stdout>\s*$/;
+
+function isClaudeLocalCommandStdout(value: unknown): boolean {
+  const normalized = normalizeClaudeTranscriptText(value);
+  return normalized !== null && LOCAL_COMMAND_STDOUT_PATTERN.test(normalized);
+}
+
 function isClaudeTranscriptNoiseText(value: unknown): boolean {
-  return isClaudeInterruptPlaceholderText(value) || isClaudeNoResponsePlaceholderText(value);
+  return (
+    isClaudeInterruptPlaceholderText(value) ||
+    isClaudeNoResponsePlaceholderText(value) ||
+    isClaudeLocalCommandStdout(value)
+  );
 }
 
 function collectClaudeTextContentParts(content: unknown): string[] {
@@ -1042,6 +1047,8 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   };
 }
 
+const claudeDebug = process.env.PASEO_CLAUDE_DEBUG === "1";
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider: "claude" = "claude";
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1134,9 +1141,9 @@ export class ClaudeAgentClient implements AgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const resolvedBinary = findExecutable("claude") ?? "not found";
+      const resolvedBinary = await findExecutable("claude") ?? "not found";
       const available = await this.isAvailable();
-      const version = resolveClaudeVersion(this.runtimeSettings);
+      const version = await resolveClaudeVersion(this.runtimeSettings);
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -1176,26 +1183,30 @@ export class ClaudeAgentClient implements AgentClient {
   }
 }
 
-function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): string | null {
+async function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): Promise<string | null> {
   const command = runtimeSettings?.command;
 
   try {
     if (command?.mode === "replace") {
-      return execFileSync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
+      const { stdout } = await execFileAsync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
         encoding: "utf8",
         timeout: 5_000,
-      }).trim() || null;
+        windowsHide: true,
+      });
+      return stdout.trim() || null;
     }
 
-    const executable = findExecutable("claude");
+    const executable = await findExecutable("claude");
     if (!executable) {
       return null;
     }
 
-    return execFileSync(executable, ["--version"], {
+    const { stdout } = await execFileAsync(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5_000,
-    }).trim() || null;
+      windowsHide: true,
+    });
+    return stdout.trim() || null;
   } catch {
     return null;
   }
@@ -1225,14 +1236,65 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readContextWindowUsedTokensFromTaskProgress(
-  message: SDKTaskProgressMessage,
+function readUsageTotalTokens(
+  usage: unknown,
 ): number | undefined {
-  const totalTokens = message.usage?.total_tokens;
+  if (!usage || typeof usage !== "object") {
+    return undefined;
+  }
+  const totalTokens = (usage as { total_tokens?: unknown }).total_tokens;
   if (typeof totalTokens !== "number" || !Number.isFinite(totalTokens) || totalTokens < 0) {
     return undefined;
   }
   return totalTokens;
+}
+
+function readContextWindowUsedTokensFromTaskProgress(
+  message: SDKTaskProgressMessage,
+): number | undefined {
+  return readUsageTotalTokens(message.usage);
+}
+
+function readUsageFromTaskNotification(message: { usage?: unknown }): number | undefined {
+  return readUsageTotalTokens(message.usage);
+}
+
+function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
+  const messageUsage = (event.message as { usage?: unknown } | undefined)?.usage;
+  if (!messageUsage || typeof messageUsage !== "object") {
+    return undefined;
+  }
+  const usage = messageUsage as {
+    input_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
+    cache_read_input_tokens?: unknown;
+  };
+  const inputTokens =
+    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
+      ? usage.input_tokens
+      : undefined;
+  const cacheCreationInputTokens =
+    typeof usage.cache_creation_input_tokens === "number" &&
+    Number.isFinite(usage.cache_creation_input_tokens)
+      ? usage.cache_creation_input_tokens
+      : 0;
+  const cacheReadInputTokens =
+    typeof usage.cache_read_input_tokens === "number" &&
+    Number.isFinite(usage.cache_read_input_tokens)
+      ? usage.cache_read_input_tokens
+      : 0;
+  if (typeof inputTokens !== "number" || inputTokens < 0) {
+    return undefined;
+  }
+  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
+}
+
+function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
+  const outputTokens = (event.usage as { output_tokens?: unknown } | undefined)?.output_tokens;
+  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {
+    return undefined;
+  }
+  return outputTokens;
 }
 
 class ClaudeAgentSession implements AgentSession {
@@ -1278,6 +1340,9 @@ class ClaudeAgentSession implements AgentSession {
   private lastForegroundPromptText: string | null = null;
   private foregroundHasVisibleActivity = false;
   private lastContextWindowUsedTokens: number | undefined;
+  private lastContextWindowMaxTokens: number | undefined;
+  private lastStreamRequestInputTokens: number | undefined;
+  private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
   private recentStderr = "";
   private closed = false;
@@ -1963,7 +2028,7 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
-    const options = this.buildOptions();
+    const options = await this.buildOptions();
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.query = this.queryFactory({ prompt: input.iterable, options });
@@ -2000,7 +2065,7 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private buildOptions(): ClaudeOptions {
+  private async buildOptions(): Promise<ClaudeOptions> {
     const thinkingOptionId =
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
@@ -2019,7 +2084,7 @@ class ClaudeAgentSession implements AgentSession {
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
 
-    const claudeBinary = findExecutable("claude");
+    const claudeBinary = await findExecutable("claude");
     this.logger.debug(
       {
         claudeBinary,
@@ -2391,15 +2456,17 @@ class ClaudeAgentSession implements AgentSession {
       while (!this.closed && this.query === activeQuery) {
         try {
           for await (const message of activeQuery) {
-            this.logger.trace(
-              {
-                claudeSessionId: this.claudeSessionId,
-                messageType: message.type,
-                messageSubtype: "subtype" in message ? message.subtype : undefined,
-                messageUuid: "uuid" in message ? message.uuid : undefined,
-              },
-              "Claude query pump: raw SDK message",
-            );
+            if (claudeDebug) {
+              this.logger.trace(
+                {
+                  claudeSessionId: this.claudeSessionId,
+                  messageType: message.type,
+                  messageSubtype: "subtype" in message ? message.subtype : undefined,
+                  messageUuid: "uuid" in message ? message.uuid : undefined,
+                },
+                "Claude query pump: raw SDK message",
+              );
+            }
             consecutiveInterruptAbortRecoveries = 0;
             if (await this.handleMissingResumedConversation(message, activeQuery)) {
               return;
@@ -2475,14 +2542,16 @@ class ClaudeAgentSession implements AgentSession {
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
     const identifiers = readEventIdentifiers(message);
 
-    this.logger.trace(
-      {
-        claudeSessionId: this.claudeSessionId,
-        messageType: message.type,
-        turnId,
-      },
-      "Claude query pump: SDK message",
-    );
+    if (claudeDebug) {
+      this.logger.trace(
+        {
+          claudeSessionId: this.claudeSessionId,
+          messageType: message.type,
+          turnId,
+        },
+        "Claude query pump: SDK message",
+      );
+    }
 
     const messageEvents = this.translateMessageToEvents(message, {
       suppressAssistantText: true,
@@ -2672,10 +2741,18 @@ class ClaudeAgentSession implements AgentSession {
               provider: "claude",
             });
           }
+          const usage = readUsageFromTaskNotification(message);
+          if (typeof usage === "number") {
+            this.lastContextWindowUsedTokens = usage;
+            events.push(this.createUsageUpdatedEvent(usage));
+          }
         } else if (message.subtype === "task_progress") {
           this.lastContextWindowUsedTokens =
             readContextWindowUsedTokensFromTaskProgress(message) ??
             this.lastContextWindowUsedTokens;
+          if (typeof this.lastContextWindowUsedTokens === "number") {
+            events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
+          }
         }
         break;
       case "user": {
@@ -2743,6 +2820,10 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "stream_event": {
+        const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
+        if (usageUpdatedEvent) {
+          events.push(usageUpdatedEvent);
+        }
         const timelineItems = this.mapPartialEvent(message.event, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
           suppressReasoning: options?.suppressReasoning ?? false,
@@ -2911,12 +2992,21 @@ class ClaudeAgentSession implements AgentSession {
       modelUsage ?? message.modelUsage,
     );
     if (contextWindowMaxTokens !== undefined) {
+      this.lastContextWindowMaxTokens = contextWindowMaxTokens;
       usage.contextWindowMaxTokens = contextWindowMaxTokens;
+    } else if (this.lastContextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
     }
     if (typeof this.lastContextWindowUsedTokens === "number") {
       // task_progress.total_tokens is the accurate context window fill level.
       // Prefer it over result.usage which contains accumulated session totals.
       usage.contextWindowUsedTokens = this.lastContextWindowUsedTokens;
+    } else if (
+      typeof this.lastStreamRequestInputTokens === "number" &&
+      typeof this.lastStreamRequestOutputTokens === "number"
+    ) {
+      usage.contextWindowUsedTokens =
+        this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens;
     } else if (message.usage) {
       // Fallback: derive from result.usage when no task_progress has been
       // received yet. These values are accumulated across all API calls, but
@@ -2935,6 +3025,54 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
     return usage;
+  }
+
+  private createUsageUpdatedEvent(contextWindowUsedTokens: number): AgentStreamEvent {
+    const usage: AgentUsage = {
+      contextWindowUsedTokens,
+    };
+    if (this.lastContextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
+    }
+    return {
+      type: "usage_updated",
+      provider: "claude",
+      usage,
+    };
+  }
+
+  private trackStreamEventUsage(event: unknown): AgentStreamEvent | null {
+    if (!event || typeof event !== "object") {
+      return null;
+    }
+    const streamEvent = event as Record<string, unknown>;
+    const eventType = readTrimmedString(streamEvent.type);
+    if (eventType === "message_start") {
+      const inputTokens = readStreamRequestInputTokens(streamEvent);
+      if (typeof inputTokens !== "number") {
+        return null;
+      }
+      this.lastStreamRequestInputTokens = inputTokens;
+      this.lastStreamRequestOutputTokens = 0;
+    } else if (eventType === "message_delta") {
+      const outputTokens = readStreamRequestOutputTokens(streamEvent);
+      if (typeof outputTokens !== "number") {
+        return null;
+      }
+      this.lastStreamRequestOutputTokens = outputTokens;
+    } else {
+      return null;
+    }
+
+    if (
+      typeof this.lastStreamRequestInputTokens !== "number" ||
+      typeof this.lastStreamRequestOutputTokens !== "number"
+    ) {
+      return null;
+    }
+    return this.createUsageUpdatedEvent(
+      this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens,
+    );
   }
 
   private handlePermissionRequest: CanUseTool = async (

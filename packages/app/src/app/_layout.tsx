@@ -14,6 +14,7 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import { VoiceProvider } from "@/contexts/voice-context";
 import { useAppSettings } from "@/hooks/use-settings";
+import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { View, Text } from "react-native";
 import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
@@ -57,7 +58,7 @@ import {
   HorizontalScrollProvider,
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
-import { getIsElectronRuntime, isCompactFormFactor } from "@/constants/layout";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { CommandCenter } from "@/components/command-center";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
@@ -357,6 +358,8 @@ interface AppContainerProps {
   chromeEnabled?: boolean;
 }
 
+const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
+
 function AppContainer({
   children,
   selectedAgentId,
@@ -364,14 +367,52 @@ function AppContainer({
 }: AppContainerProps) {
   const { theme } = useUnistyles();
   const daemons = useHosts();
+  const { settings, updateSettings } = useAppSettings();
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
   const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const toggleBothSidebars = usePanelStore((state) => state.toggleBothSidebars);
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const agentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
 
-  const isCompactLayout = isCompactFormFactor();
+  const cycleTheme = useCallback(() => {
+    const currentIndex = THEME_CYCLE_ORDER.indexOf(settings.theme as ThemeName);
+    const nextIndex = (currentIndex + 1) % THEME_CYCLE_ORDER.length;
+    void updateSettings({ theme: THEME_CYCLE_ORDER[nextIndex]! });
+  }, [settings.theme, updateSettings]);
+
+  const isCompactLayout = useIsCompactFormFactor();
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
+
+  useEffect(() => {
+    const bp = UnistylesRuntime.breakpoint;
+    const screenW = UnistylesRuntime.screen.width;
+    const screenH = UnistylesRuntime.screen.height;
+    const isElectron = getIsElectronRuntime();
+    const windowW = Platform.OS === "web" ? window.innerWidth : undefined;
+    const windowH = Platform.OS === "web" ? window.innerHeight : undefined;
+    const dpr = Platform.OS === "web" ? window.devicePixelRatio : undefined;
+    const ua = Platform.OS === "web" ? navigator.userAgent : undefined;
+
+    console.log(
+      "[layout-debug]",
+      JSON.stringify({
+        breakpoint: bp,
+        isCompactLayout,
+        isElectron,
+        chromeEnabled,
+        isFocusModeEnabled,
+        agentListOpen,
+        sidebarWidth,
+        sidebarRenderedInRow: !isCompactLayout && chromeEnabled && !isFocusModeEnabled,
+        unistylesScreen: { w: screenW, h: screenH },
+        window: { w: windowW, h: windowH },
+        devicePixelRatio: dpr,
+        userAgent: ua,
+      }),
+    );
+  }, [isCompactLayout, chromeEnabled, isFocusModeEnabled, agentListOpen, sidebarWidth]);
 
   useKeyboardShortcuts({
     enabled: chromeEnabled,
@@ -381,6 +422,7 @@ function AppContainer({
     toggleFileExplorer,
     toggleBothSidebars,
     toggleFocusMode,
+    cycleTheme,
   });
 
   const containerStyle = useMemo(
@@ -530,7 +572,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       UnistylesRuntime.setAdaptiveThemes(true);
     } else {
       UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(settings.theme);
+      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
     }
   }, [settingsLoading, settings.theme]);
 
@@ -574,7 +616,7 @@ function OfferLinkListener({
           if (cancelled) return;
           const serverId = (profile as any)?.serverId;
           if (typeof serverId !== "string" || !serverId) return;
-          router.replace(buildHostRootRoute(serverId) as any);
+          router.replace(buildHostRootRoute(serverId));
         })
         .catch((error) => {
           if (cancelled) return;
@@ -692,7 +734,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
     if (hosts.some((host) => host.serverId === activeServerId)) {
       return;
     }
-    router.replace(mapPathnameToServer(pathname, hosts[0]!.serverId) as any);
+    router.replace(mapPathnameToServer(pathname, hosts[0]!.serverId));
   }, [activeServerId, hosts, pathname, router]);
 
   // Parse selectedAgentKey directly from pathname

@@ -120,21 +120,28 @@ import { resolveVoiceMcpBridgeFromRuntime } from "./voice-mcp-bridge-command.js"
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
-function resolveVoiceMcpBridgeCommand(logger: Logger): { command: string; baseArgs: string[] } {
-  const decision = resolveVoiceMcpBridgeFromRuntime({
-    bootstrapModuleUrl: import.meta.url,
-    execPath: process.execPath,
-    explicitScriptPath: process.env.PASEO_MCP_STDIO_SOCKET_BRIDGE_SCRIPT,
-  });
-  logger.info(
-    {
-      source: decision.source,
-      command: decision.resolved.command,
-      baseArgs: decision.resolved.baseArgs,
-    },
-    "Resolved voice MCP bridge command",
-  );
-  return decision.resolved;
+function resolveVoiceMcpBridgeCommand(
+  logger: Logger,
+): { command: string; baseArgs: string[] } | null {
+  try {
+    const decision = resolveVoiceMcpBridgeFromRuntime({
+      bootstrapModuleUrl: import.meta.url,
+      execPath: process.execPath,
+      explicitScriptPath: process.env.PASEO_MCP_STDIO_SOCKET_BRIDGE_SCRIPT,
+    });
+    logger.info(
+      {
+        source: decision.source,
+        command: decision.resolved.command,
+        baseArgs: decision.resolved.baseArgs,
+      },
+      "Resolved voice MCP bridge command",
+    );
+    return decision.resolved;
+  } catch (err) {
+    logger.warn({ err }, "Voice MCP bridge script not available — voice MCP via stdio disabled");
+    return null;
+  }
 }
 
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
@@ -247,7 +254,7 @@ export async function createPaseoDaemon(
 
     app.use((req, res, next) => {
       const origin = req.headers.origin;
-      if (origin && allowedOrigins.has(origin)) {
+      if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -586,14 +593,16 @@ export async function createPaseoDaemon(
       speechService,
       terminalManager,
       {
-        voiceAgentMcpStdio: {
-          command: voiceMcpBridgeCommand.command,
-          baseArgs: [...voiceMcpBridgeCommand.baseArgs],
-          env: {
-            ELECTRON_RUN_AS_NODE: "1",
-            PASEO_HOME: config.paseoHome,
-          },
-        },
+        voiceAgentMcpStdio: voiceMcpBridgeCommand
+          ? {
+              command: voiceMcpBridgeCommand.command,
+              baseArgs: [...voiceMcpBridgeCommand.baseArgs],
+              env: {
+                ELECTRON_RUN_AS_NODE: "1",
+                PASEO_HOME: config.paseoHome,
+              },
+            }
+          : null,
         ensureVoiceMcpSocketForAgent: (agentId) =>
           voiceMcpBridgeManager?.ensureBridgeForCaller(agentId) ??
           Promise.reject(new Error("Voice MCP bridge manager is not initialized")),

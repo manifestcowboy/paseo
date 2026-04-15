@@ -1,7 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { posix, win32 } from "node:path";
-import type { EditorTargetDescriptorPayload, EditorTargetId } from "../shared/messages.js";
+import type {
+  EditorTargetDescriptorPayload,
+  EditorTargetId,
+  KnownEditorTargetId,
+} from "../shared/messages.js";
 import {
   findExecutable,
   quoteWindowsArgument,
@@ -9,7 +13,7 @@ import {
 } from "../utils/executable.js";
 
 type EditorTargetDefinition = {
-  id: EditorTargetId;
+  id: KnownEditorTargetId;
   label: string;
   command: string;
   platforms?: readonly NodeJS.Platform[];
@@ -18,7 +22,7 @@ type EditorTargetDefinition = {
 
 type ListAvailableEditorTargetsDependencies = {
   platform?: NodeJS.Platform;
-  findExecutable?: (command: string) => string | null;
+  findExecutable?: (command: string) => string | null | Promise<string | null>;
 };
 
 type OpenInEditorTargetDependencies = ListAvailableEditorTargetsDependencies & {
@@ -29,6 +33,7 @@ type OpenInEditorTargetDependencies = ListAvailableEditorTargetsDependencies & {
 const EDITOR_TARGETS: readonly EditorTargetDefinition[] = [
   { id: "cursor", label: "Cursor", command: "cursor" },
   { id: "vscode", label: "VS Code", command: "code" },
+  { id: "webstorm", label: "WebStorm", command: "webstorm" },
   { id: "zed", label: "Zed", command: "zed" },
   { id: "finder", label: "Finder", command: "open", platforms: ["darwin"] },
   { id: "explorer", label: "Explorer", command: "explorer", platforms: ["win32"] },
@@ -65,28 +70,27 @@ function resolveEditorTargetDefinition(editorId: EditorTargetId): EditorTargetDe
   return target;
 }
 
-export function listAvailableEditorTargets(
+export async function listAvailableEditorTargets(
   dependencies: ListAvailableEditorTargetsDependencies = {},
-): EditorTargetDescriptorPayload[] {
+): Promise<EditorTargetDescriptorPayload[]> {
   const platform = dependencies.platform ?? process.platform;
   const findExecutableFn = dependencies.findExecutable ?? findExecutable;
 
-  return EDITOR_TARGETS.flatMap((target) => {
+  const results: EditorTargetDescriptorPayload[] = [];
+  for (const target of EDITOR_TARGETS) {
     if (!isTargetSupportedOnPlatform(target, platform)) {
-      return [];
+      continue;
     }
-    const executable = findExecutableFn(target.command);
+    const executable = await findExecutableFn(target.command);
     if (!executable) {
-      return [];
+      continue;
     }
-
-    return [
-      {
-        id: target.id,
-        label: target.label,
-      },
-    ];
-  });
+    results.push({
+      id: target.id,
+      label: target.label,
+    });
+  }
+  return results;
 }
 
 type Launch = {
@@ -94,17 +98,17 @@ type Launch = {
   args: string[];
 };
 
-function resolveEditorLaunch(input: {
+async function resolveEditorLaunch(input: {
   editorId: EditorTargetId;
   path: string;
   platform: NodeJS.Platform;
-  findExecutableFn: typeof findExecutable;
-}): Launch {
+  findExecutableFn: (command: string) => string | null | Promise<string | null>;
+}): Promise<Launch> {
   const target = resolveEditorTargetDefinition(input.editorId);
   if (!isTargetSupportedOnPlatform(target, input.platform)) {
     throw new Error(`Editor target unavailable: ${target.label}`);
   }
-  const executable = input.findExecutableFn(target.command);
+  const executable = await input.findExecutableFn(target.command);
   if (!executable) {
     throw new Error(`Editor target unavailable: ${target.label}`);
   }
@@ -135,7 +139,7 @@ export async function openInEditorTarget(
     throw new Error(`Path does not exist: ${pathToOpen}`);
   }
 
-  const launch = resolveEditorLaunch({
+  const launch = await resolveEditorLaunch({
     editorId: input.editorId,
     path: pathToOpen,
     platform,

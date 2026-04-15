@@ -159,6 +159,79 @@ describe("convertClaudeHistoryEntry", () => {
     expect(convertClaudeHistoryEntry(assistantNoiseEntry, mapBlocks)).toEqual([]);
   });
 
+  test("skips <local-command-stdout> messages (model switch, /context, etc.)", () => {
+    // Real entries from Claude Code JSONL history files
+    const modelSwitch = {
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<local-command-stdout>Set model to claude-opus-4-6</local-command-stdout>",
+      },
+      userType: "external",
+    };
+
+    const modelSwitchWithAnsi = {
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          '<local-command-stdout>Set model to \u001b[1mopus (claude-opus-4-6)\u001b[22m</local-command-stdout>',
+      },
+    };
+
+    const contextDump = {
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<local-command-stdout>## Context Usage\n\n**Model:** claude-opus-4-6\n**Tokens:** 19k</local-command-stdout>",
+      },
+    };
+
+    const planMode = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+      },
+    };
+
+    const goodbye = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "<local-command-stdout>Bye!</local-command-stdout>",
+      },
+    };
+
+    const empty = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "<local-command-stdout></local-command-stdout>",
+      },
+    };
+
+    const mapBlocks = vi.fn().mockReturnValue([]);
+
+    expect(convertClaudeHistoryEntry(modelSwitch, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(modelSwitchWithAnsi, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(contextDump, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(planMode, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(goodbye, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(empty, mapBlocks)).toEqual([]);
+
+    // Real user messages must NOT be filtered
+    const realMessage = {
+      type: "user",
+      message: { role: "user", content: "fix the bug in auth.ts" },
+    };
+    expect(convertClaudeHistoryEntry(realMessage, mapBlocks)).toEqual([
+      { type: "user_message", text: "fix the bug in auth.ts" },
+    ]);
+  });
+
   test("maps task notifications to synthetic tool calls", () => {
     const entry = {
       type: "system",
@@ -468,6 +541,124 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
+  test("task_progress emits a usage_updated event", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task-1",
+      description: "Processing",
+      usage: {
+        total_tokens: 999,
+        tool_uses: 1,
+        duration_ms: 50,
+      },
+      uuid: "task-progress-1",
+      session_id: "session-1",
+    });
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 999,
+      },
+    });
+  });
+
+  test("task_notification emits a usage_updated event", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "system",
+      subtype: "task_notification",
+      uuid: "task-note-1",
+      task_id: "task-1",
+      status: "running",
+      summary: "Background task still running",
+      usage: {
+        total_tokens: 777,
+        tool_uses: 1,
+        duration_ms: 50,
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 777,
+      },
+    });
+  });
+
+  test("message_start stream events emit usage_updated with per-request usage", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 150,
+      },
+    });
+  });
+
+  test("message_delta stream events update per-request usage", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const events = session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 25,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 175,
+      },
+    });
+  });
+
   test("task_progress usage takes priority over derived result usage", async () => {
     const session = await createSessionForTest();
 
@@ -636,6 +827,136 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 22,
+    });
+  });
+
+  test("convertUsage uses per-request stream usage when no task_progress is available", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 25,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const usage = session.convertUsage({
+      type: "result",
+      subtype: "success",
+      usage: {
+        input_tokens: 10,
+        cache_read_input_tokens: 5,
+        output_tokens: 7,
+      },
+      total_cost_usd: 0.12,
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      totalCostUsd: 0.12,
+      contextWindowUsedTokens: 175,
+    });
+  });
+
+  test("per-request stream usage is not cumulative across API calls in a turn", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 25,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const secondStartEvents = session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 40,
+            cache_creation_input_tokens: 5,
+            cache_read_input_tokens: 10,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(secondStartEvents).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 55,
+      },
+    });
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 7,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const usage = session.convertUsage({
+      type: "result",
+      subtype: "success",
+      usage: {
+        input_tokens: 10,
+        cache_read_input_tokens: 5,
+        output_tokens: 7,
+      },
+      total_cost_usd: 0.12,
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      totalCostUsd: 0.12,
+      contextWindowUsedTokens: 62,
     });
   });
 });

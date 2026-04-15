@@ -9,6 +9,7 @@ import type {
   McpServerConfig,
   AgentPermissionRequest,
   AgentPermissionResponse,
+  AgentPermissionResult,
   AgentPromptContentBlock,
   AgentPromptInput,
   AgentRunOptions,
@@ -27,7 +28,7 @@ import type {
 } from "../agent-sdk-types.js";
 import type { Logger } from "pino";
 
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, Dirent } from "node:fs";
@@ -46,11 +47,8 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../../../utils/executable.js";
+import { findExecutable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
@@ -228,8 +226,8 @@ function mergeCodexConfiguredDefaults(
   };
 }
 
-function resolveCodexBinary(): string {
-  const found = findExecutable("codex");
+async function resolveCodexBinary(): Promise<string> {
+  const found = await findExecutable("codex");
   if (found) {
     return found;
   }
@@ -238,10 +236,10 @@ function resolveCodexBinary(): string {
   );
 }
 
-function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): {
+async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
   command: string;
   args: string[];
-} {
+}> {
   return resolveProviderCommandPrefix(runtimeSettings?.command, resolveCodexBinary);
 }
 
@@ -2457,7 +2455,7 @@ class CodexAppServerAgentSession implements AgentSession {
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
-    private readonly spawnAppServer: () => ChildProcessWithoutNullStreams,
+    private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
   ) {
     this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
     if (config.modeId === undefined) {
@@ -2495,7 +2493,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async connect(): Promise<void> {
     if (this.connected) return;
-    const child = this.spawnAppServer();
+    const child = await this.spawnAppServer();
     this.client = new CodexAppServerClient(child, this.logger);
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
@@ -2676,22 +2674,19 @@ class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
   }
 
-  private async handleApprovedPlanPermission(params: { planText?: unknown }): Promise<void> {
+  /**
+   * Prepare the session for plan implementation by disabling plan/fast mode
+   * and returning the implementation prompt. The caller is responsible for
+   * starting the turn through the normal streamAgent path.
+   */
+  private preparePlanImplementation(params: { planText?: unknown }): string {
     const planText =
       typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
-    const previousPlanMode = this.planModeEnabled;
-    const previousFastMode = this.serviceTier === "fast";
 
     this.applyFeatureValue("plan_mode", false);
     this.applyFeatureValue("fast_mode", false);
 
-    try {
-      await this.startTurn(buildCodexPlanImplementationPrompt(planText));
-    } catch (error) {
-      this.applyFeatureValue("plan_mode", previousPlanMode);
-      this.applyFeatureValue("fast_mode", previousFastMode);
-      throw error;
-    }
+    return buildCodexPlanImplementationPrompt(planText);
   }
 
   private registerRequestHandlers(): void {
@@ -3105,7 +3100,10 @@ class CodexAppServerAgentSession implements AgentSession {
     return Array.from(this.pendingPermissions.values());
   }
 
-  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<AgentPermissionResult | void> {
     const pending = this.pendingPermissionHandlers.get(requestId);
     if (!pending) {
       throw new Error(`No pending Codex app-server permission request with id '${requestId}'`);
@@ -3113,8 +3111,9 @@ class CodexAppServerAgentSession implements AgentSession {
     const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
 
     if (pending.kind === "plan") {
+      let followUpPrompt: string | undefined;
       if (response.behavior === "allow") {
-        await this.handleApprovedPlanPermission({
+        followUpPrompt = this.preparePlanImplementation({
           planText: pending.planText ?? pendingRequest?.metadata?.planText,
         });
       }
@@ -3128,6 +3127,9 @@ class CodexAppServerAgentSession implements AgentSession {
         requestId,
         resolution: response,
       });
+      if (followUpPrompt) {
+        return { followUpPrompt };
+      }
       return;
     }
 
@@ -3506,6 +3508,13 @@ class CodexAppServerAgentSession implements AgentSession {
 
     if (parsed.kind === "token_usage_updated") {
       this.latestUsage = toAgentUsage(parsed.tokenUsage);
+      if (this.latestUsage) {
+        this.notifySubscribers({
+          type: "usage_updated",
+          provider: CODEX_PROVIDER,
+          usage: this.latestUsage,
+        });
+      }
       return;
     }
 
@@ -3990,24 +3999,19 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private spawnAppServer(launchEnv?: Record<string, string>): ChildProcessWithoutNullStreams {
-    const launchPrefix = resolveCodexLaunchPrefix(this.runtimeSettings);
+  private async spawnAppServer(launchEnv?: Record<string, string>): Promise<ChildProcessWithoutNullStreams> {
+    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     this.logger.trace(
       {
         launchPrefix,
       },
       "Spawning Codex app server",
     );
-    return spawn(
-      quoteWindowsCommand(launchPrefix.command),
-      [...launchPrefix.args, "app-server"].map((argument) => quoteWindowsArgument(argument)),
-      {
-        detached: process.platform !== "win32",
-        shell: process.platform === "win32",
-        stdio: ["pipe", "pipe", "pipe"],
-        env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
-      },
-    );
+    return spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
+      detached: process.platform !== "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
+    }) as ChildProcessWithoutNullStreams;
   }
 
   async createSession(
@@ -4044,7 +4048,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    const child = this.spawnAppServer();
+    const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -4114,7 +4118,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const child = this.spawnAppServer();
+    const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -4206,13 +4210,13 @@ export class CodexAppServerAgentClient implements AgentClient {
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const available = await this.isAvailable();
-      const resolvedBinary = findExecutable("codex");
+      const resolvedBinary = await findExecutable("codex");
       const entries: Array<{ label: string; value: string }> = [
         {
           label: "Binary",
           value: resolvedBinary ?? "not found",
         },
-        { label: "Version", value: resolvedBinary ? resolveBinaryVersion(resolvedBinary) : "unknown" },
+        { label: "Version", value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown" },
       ];
       let status = formatDiagnosticStatus(available);
 

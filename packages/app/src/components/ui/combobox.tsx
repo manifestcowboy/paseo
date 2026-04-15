@@ -11,7 +11,8 @@ import {
   StatusBar,
   useWindowDimensions,
 } from "react-native";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
@@ -261,7 +262,7 @@ export function Combobox({
   anchorRef,
   children,
 }: ComboboxProps): ReactElement {
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const isMobile = useIsCompactFormFactor();
   const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
   const isDesktopAboveSearch =
     !isMobile && Platform.OS === "web" && effectiveOptionsPosition === "above-search";
@@ -659,13 +660,7 @@ export function Combobox({
     </>
   );
 
-  const defaultContent = (
-    <>
-      {effectiveOptionsPosition === "above-search" ? optionsList : null}
-      {searchable ? searchInput : null}
-      {effectiveOptionsPosition === "below-search" ? optionsList : null}
-    </>
-  );
+  const defaultContent = optionsList;
 
   const content = children ?? defaultContent;
 
@@ -690,6 +685,7 @@ export function Combobox({
           <Text style={styles.comboboxTitle}>{title}</Text>
         </View>
         {stickyHeader}
+        {!children && searchable ? searchInput : null}
         <BottomSheetScrollView
           contentContainerStyle={styles.comboboxScrollContent}
           keyboardShouldPersistTaps="handled"
@@ -745,6 +741,7 @@ export function Combobox({
             </>
           ) : (
             <>
+              {searchable ? searchInput : null}
               {effectiveOptionsPosition === "above-search" ? (
                 <ScrollView
                   ref={desktopOptionsScrollRef}
@@ -759,9 +756,7 @@ export function Combobox({
                 >
                   {optionsList}
                 </ScrollView>
-              ) : null}
-              {searchable ? searchInput : null}
-              {effectiveOptionsPosition === "below-search" ? (
+              ) : (
                 <ScrollView
                   contentContainerStyle={styles.desktopScrollContent}
                   keyboardShouldPersistTaps="handled"
@@ -770,7 +765,7 @@ export function Combobox({
                 >
                   {optionsList}
                 </ScrollView>
-              ) : null}
+              )}
             </>
           )}
         </Animated.View>
@@ -783,15 +778,12 @@ const styles = StyleSheet.create((theme) => ({
   searchInputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-    borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[3],
-    marginHorizontal: theme.spacing[2],
-    marginBottom: theme.spacing[2],
-    marginTop: theme.spacing[1],
     gap: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    ...(IS_WEB ? {} : { marginHorizontal: theme.spacing[1] }),
   },
   searchInput: {
     flex: 1,

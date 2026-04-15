@@ -1,5 +1,4 @@
 import {
-  spawn,
   type ChildProcess,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
@@ -89,6 +88,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { findExecutable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 
 const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -125,6 +125,8 @@ type ACPAgentClientOptions = {
     thinkingOptionId: string,
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
+  waitForInitialCommands?: boolean;
+  initialCommandsWaitTimeoutMs?: number;
 };
 
 type ACPAgentSessionOptions = {
@@ -144,6 +146,8 @@ type ACPAgentSessionOptions = {
   capabilities: AgentCapabilityFlags;
   handle?: AgentPersistenceHandle;
   launchEnv?: Record<string, string>;
+  waitForInitialCommands?: boolean;
+  initialCommandsWaitTimeoutMs?: number;
 };
 
 type SpawnedACPProcess = {
@@ -302,6 +306,8 @@ export class ACPAgentClient implements AgentClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly waitForInitialCommands: boolean;
+  private readonly initialCommandsWaitTimeoutMs: number;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
@@ -314,6 +320,8 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
+    this.waitForInitialCommands = options.waitForInitialCommands ?? false;
+    this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
   }
 
   async createSession(
@@ -335,6 +343,8 @@ export class ACPAgentClient implements AgentClient {
         thinkingOptionWriter: this.thinkingOptionWriter,
         capabilities: this.capabilities,
         launchEnv: launchContext?.env,
+        waitForInitialCommands: this.waitForInitialCommands,
+        initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
     );
     await session.initializeNewSession();
@@ -375,6 +385,8 @@ export class ACPAgentClient implements AgentClient {
       capabilities: this.capabilities,
       handle,
       launchEnv: launchContext?.env,
+      waitForInitialCommands: this.waitForInitialCommands,
+      initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
     await session.initializeResumedSession();
     return session;
@@ -466,7 +478,7 @@ export class ACPAgentClient implements AgentClient {
 
   async isAvailable(): Promise<boolean> {
     try {
-      this.resolveLaunchCommand();
+      await this.resolveLaunchCommand();
       return true;
     } catch {
       return false;
@@ -476,16 +488,15 @@ export class ACPAgentClient implements AgentClient {
   protected async spawnProcess(
     launchEnv?: Record<string, string>,
   ): Promise<SpawnedACPProcess> {
-    const { command, args } = this.resolveLaunchCommand();
-    const child = spawn(command, args, {
+    const { command, args } = await this.resolveLaunchCommand();
+    const child = spawnProcess(command, args, {
       cwd: process.cwd(),
       env: {
         ...applyProviderEnv(process.env as Record<string, string | undefined>, this.runtimeSettings),
         ...(launchEnv ?? {}),
       },
-      shell: process.platform === "win32",
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }) as ChildProcessWithoutNullStreams;
 
     const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
@@ -552,9 +563,9 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected resolveLaunchCommand(): { command: string; args: string[] } {
-    const prefix = resolveProviderCommandPrefix(this.runtimeSettings?.command, () => {
-      const resolved = findExecutable(this.defaultCommand[0]);
+  protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+    const resolved = await findExecutable(this.defaultCommand[0]);
+    const prefix = await resolveProviderCommandPrefix(this.runtimeSettings?.command, () => {
       if (!resolved) {
         throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
       }
@@ -618,6 +629,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private lastActivityAt: string | null = null;
   private configOptions: SessionConfigOption[] = [];
   private cachedCommands: AgentSlashCommand[] = [];
+  private commandsReadyDeferred: { promise: Promise<void>; resolve: () => void } | null = null;
+  private commandsReadySettled = false;
+  private waitForInitialCommands: boolean;
+  private initialCommandsWaitTimeoutMs: number;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private closed = false;
@@ -646,6 +661,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentModel = config.model ?? null;
     this.thinkingOptionId = config.thinkingOptionId ?? null;
     this.currentTitle = config.title ?? null;
+    this.waitForInitialCommands = options.waitForInitialCommands ?? false;
+    this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
   }
 
   get id(): string | null {
@@ -877,7 +894,59 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.currentMode;
   }
 
+  private ensureCommandsReadyDeferred(): void {
+    if (this.commandsReadyDeferred || this.commandsReadySettled || this.cachedCommands.length > 0) {
+      return;
+    }
+
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    this.commandsReadyDeferred = { promise, resolve };
+  }
+
+  private settleCommandsReady(): void {
+    if (this.commandsReadySettled) {
+      return;
+    }
+    this.commandsReadySettled = true;
+    this.commandsReadyDeferred?.resolve();
+    this.commandsReadyDeferred = null;
+  }
+
+  private async waitForCommandsReady(): Promise<void> {
+    const deferred = this.commandsReadyDeferred;
+    if (!deferred) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        deferred.promise,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, this.initialCommandsWaitTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   async listCommands(): Promise<AgentSlashCommand[]> {
+    if (this.cachedCommands.length > 0) {
+      return this.cachedCommands;
+    }
+    if (!this.waitForInitialCommands || this.closed) {
+      return this.cachedCommands;
+    }
+
+    this.ensureCommandsReadyDeferred();
+    await this.waitForCommandsReady();
+    this.settleCommandsReady();
     return this.cachedCommands;
   }
 
@@ -1047,6 +1116,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.closed = true;
 
+    this.settleCommandsReady();
+
     for (const pending of this.pendingPermissions.values()) {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
@@ -1172,13 +1243,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async createTerminal(params: CreateTerminalRequest): Promise<{ terminalId: string }> {
     const terminalId = randomUUID();
     const env = Object.fromEntries((params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]));
-    const child = spawn(params.command, params.args ?? [], {
+    const child = spawnProcess(params.command, params.args ?? [], {
       cwd: params.cwd ?? this.config.cwd,
       env: {
         ...applyProviderEnv(process.env as Record<string, string | undefined>, this.runtimeSettings),
         ...env,
       },
-      shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -1201,8 +1271,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       rejectExit,
     };
 
-    child.stdout.on("data", (chunk: Buffer | string) => appendTerminalOutput(entry, chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer | string) => appendTerminalOutput(entry, chunk.toString()));
+    child.stdout!.on("data", (chunk: Buffer | string) => appendTerminalOutput(entry, chunk.toString()));
+    child.stderr!.on("data", (chunk: Buffer | string) => appendTerminalOutput(entry, chunk.toString()));
     child.once("error", (error) => rejectExit(error instanceof Error ? error : new Error(String(error))));
     child.once("exit", (code, signal) => {
       const exit = { exitCode: code, signal };
@@ -1245,8 +1315,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async spawnProcess(): Promise<SpawnedACPProcess> {
-    const prefix = resolveProviderCommandPrefix(this.runtimeSettings?.command, () => {
-      const resolved = findExecutable(this.defaultCommand[0]);
+    const resolved = await findExecutable(this.defaultCommand[0]);
+    const prefix = await resolveProviderCommandPrefix(this.runtimeSettings?.command, () => {
       if (!resolved) {
         throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
       }
@@ -1255,15 +1325,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
-    const child = spawn(command, args, {
+    const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
       env: {
         ...applyProviderEnv(process.env as Record<string, string | undefined>, this.runtimeSettings),
         ...(this.launchEnv ?? {}),
       },
-      shell: process.platform === "win32",
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }) as ChildProcessWithoutNullStreams;
 
     const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
@@ -1395,6 +1464,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           description: command.description,
           argumentHint: "",
         }));
+        this.settleCommandsReady();
         return [];
       default:
         return [];
