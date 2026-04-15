@@ -181,6 +181,88 @@ State this explicitly in each agent's prompt: "Do NOT touch files in X directory
 
 ---
 
+## Syncing with Upstream (Fork Maintenance)
+
+**Rule**: Always run `npm run typecheck` and `npm run format:check` locally before pushing after an upstream merge. Never blindly keep HEAD for all conflicts.
+
+**What went wrong**: Syncing upstream/main (v0.1.56) introduced 8+ typecheck failures and 2 format failures that broke CI. Root causes:
+1. Keeping our stripped-down `use-settings.ts` blocked the upstream's expanded `AppSettings` type (`ThemeName`, `sendBehavior`) that `settings-screen.tsx` depended on
+2. Keeping the reverted `opencode-agent.ts` left unresolved Promise type errors against updated server types
+3. Two `IS_WEB` / `Platform.OS` references were missed during conflict resolution
+4. Server package `dist/` was stale — `spawnProcess`/`execCommand` were in source but not in compiled types
+
+**How to sync cleanly**:
+```bash
+git fetch upstream
+git merge upstream/main
+# For each conflict, read BOTH sides before deciding — don't blindly pick HEAD
+# After resolving:
+npm run build --workspace=@getpaseo/server   # rebuild dist types if server changed
+npm run typecheck                             # must be zero errors
+npm run format                               # auto-fix formatting
+git add -A && git commit && git push origin main
+```
+
+**Conflict resolution heuristics**:
+- If upstream changed a **type definition** (e.g. `AppSettings`, `ProviderSnapshotEntry`): take upstream — downstream files will depend on it
+- If upstream changed a **large implementation file** (e.g. `opencode-agent.ts`): take upstream unless you have specific intentional changes to that file
+- If the conflict is in a **file you added** (e.g. `attachment-image-preview-modal.tsx`): take yours
+- If upstream renamed constants (e.g. `IS_WEB` → `isWeb`): take upstream and update your usage
+
+---
+
+## Our Customizations in This Fork
+
+**What we've added** (protect these during upstream syncs):
+
+| File | What it does |
+|---|---|
+| `packages/app/src/components/attachment-image-preview-modal.tsx` | Full-screen image lightbox — new file, no upstream conflict |
+| `packages/app/src/components/message-input.tsx` | Tap thumbnail to preview; separate remove button; uses lightbox modal |
+| `packages/app/src/components/message.tsx` | Wired to lightbox in user message image display |
+| `packages/app/src/lib/overlay-root.ts` | 1-line addition for portal root |
+| `orchestrate.json` | Agent orchestration config (root of repo) |
+| `LESSONS.md` | This file |
+| `CUSTOM_DESKTOP_WORKFLOW.md` | Custom desktop workflow notes |
+| `pr-notes/` | PR documentation |
+
+**Files that are safe to take 100% from upstream** (no custom changes):
+- `use-settings.ts` — our validation was redundant; upstream already has `VALID_THEMES` guard
+- `opencode-agent.ts` — we reverted a cherry-pick; upstream's full version is correct
+- `settings-screen.tsx`, `_layout.tsx` — no custom changes
+
+---
+
+## Rebuild Server Dist After Upstream Sync
+
+**Rule**: After syncing upstream, always rebuild the server package before typechecking. The committed `dist/` snapshot goes stale when exports change.
+
+**Symptom**: Typecheck errors like `Module '@getpaseo/server' has no exported member 'spawnProcess'` even though `exports.ts` has the export.
+
+**Fix**:
+```bash
+npm run build --workspace=@getpaseo/server
+npm run typecheck   # should now be clean
+```
+
+**Why**: The server package's `dist/server/server/exports.d.ts` is committed to the repo as a snapshot. When upstream adds exports to `src/server/exports.ts`, the dist snapshot is stale until rebuilt. CI works because it always builds from scratch.
+
+---
+
+## Keep One Worktree, Not Five
+
+**Rule**: Never accumulate multiple git worktrees of the same repo. Use one (`~/paseo` on `main`) and create temporary worktrees only when actively needed.
+
+**What went wrong**: Five Paseo worktrees accumulated (`paseo`, `paseo-latest-lightbox`, `paseo-lightbox-recover`, `paseo-v053-lightbox`, `paseo-v054-lightbox`) — each with its own `node_modules`. Total waste: ~15 GB.
+
+**How to avoid**:
+1. All work happens in `~/paseo` on `main`
+2. If you need an isolated branch for a task: `git worktree add ../paseo-temp feature/xyz`
+3. Remove it when done: `git worktree remove ../paseo-temp`
+4. Never let worktrees pile up — they each duplicate `node_modules`
+
+---
+
 ## Browser Testing Is Unreliable via Subagents
 
 **Rule**: agent-browser interactive commands and Playwright via Paseo subagents are currently unreliable. Plan for this.
