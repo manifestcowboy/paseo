@@ -2,6 +2,19 @@
 
 This project keeps a few local customizations on top of upstream Paseo. The goal is simple: update upstream, retain those files, and patch the installed `/Applications/Paseo.app` automatically.
 
+## Minimal maintenance surface
+
+Keep this workflow small. The fork-maintenance layer is intentionally:
+
+- 3 operational scripts:
+  - `scripts/update-upstream-preserve-custom.sh`
+  - `scripts/sync-installed-app-customizations.sh`
+  - `scripts/verify-customizations.sh`
+- 1 data file:
+  - `scripts/customization-manifest.sh`
+
+Do not add another workflow doc, duplicate preserved-file list, or parallel update script unless the existing files cannot be extended cleanly.
+
 ## Normal update flow
 
 Run from repo root:
@@ -34,6 +47,8 @@ When you add a new fork-only customization:
 2. Update `CUSTOM_CHANGELOG.md`
 3. Extend `scripts/verify-customizations.sh` if the new behavior needs explicit checks
 4. Run `npm run verify:customizations`
+
+If a new customization can be represented by updating the manifest, changelog, or verification checks, do that instead of creating a new maintenance file.
 
 ## Keep customization when updating Paseo
 

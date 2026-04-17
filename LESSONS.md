@@ -178,6 +178,7 @@ git add -A && git commit && git push origin main
 2. Update `CUSTOM_CHANGELOG.md`.
 3. Extend `scripts/verify-customizations.sh` when the customization introduces behavior that should be checked automatically.
 4. Run `npm run verify:customizations`.
+5. Do not create another maintenance script or duplicate workflow doc unless the current 3-script + 1-manifest structure cannot handle the change cleanly.
 
 **Files that are safe to take 100% from upstream** (no custom changes):
 - `opencode-agent.ts` — we reverted a cherry-pick; upstream's full version is correct

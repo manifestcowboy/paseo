@@ -59,6 +59,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
 - **This fork has local customizations.** For routine upstream updates, use `npm run update:upstream:preserve`. If the installed app looks upstream-clean afterward, run `npm run sync:installed:app`.
 - **The canonical preserved customization list lives in `scripts/customization-manifest.sh`.** When you add a new fork-only customization, update that manifest in the same commit.
 - **When adding a new fork-only customization, also update `CUSTOM_CHANGELOG.md` and extend `scripts/verify-customizations.sh` if the behavior needs explicit verification.**
+- **Keep the maintenance surface minimal.** The fork workflow should stay limited to 3 operational scripts (`update-upstream-preserve-custom.sh`, `sync-installed-app-customizations.sh`, `verify-customizations.sh`) plus 1 manifest (`customization-manifest.sh`). Extend those files before creating new workflow files or duplicate scripts.
 - **NEVER make breaking changes to WebSocket or message schemas.** The primary compatibility path is old mobile app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Every schema change MUST be backward-compatible for old clients against new daemons:
   - New fields: always `.optional()` with a sensible default or `.transform()` fallback.
   - Never change a field from optional to required.
