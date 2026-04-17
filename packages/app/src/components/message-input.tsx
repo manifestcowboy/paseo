@@ -78,6 +78,8 @@ export interface MessageInputProps {
   disabled?: boolean;
   /** True when this input is the active composer. Used to gate global hotkeys and stop dictation when hidden. */
   isInputActive?: boolean;
+  /** Newer alias for isInputActive passed by upstream call sites. */
+  isPaneFocused?: boolean;
   /** Content to render on the left side of the button row (e.g., AgentStatusBar) */
   leftContent?: React.ReactNode;
   /** Content to render on the right side before the voice button (e.g., context window meter) */
@@ -229,6 +231,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     autoFocusKey,
     disabled = false,
     isInputActive = true,
+    isPaneFocused,
     leftContent,
     beforeVoiceContent,
     rightContent,
@@ -245,6 +248,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   },
   ref,
 ) {
+  const isComposerActive = isPaneFocused ?? isInputActive;
   const { theme } = useUnistyles();
   const buttonIconSize = isWeb ? theme.iconSize.md : theme.iconSize.lg;
   const investigationComponentId = `MessageInput:${voiceServerId ?? "unknown-server"}:${voiceAgentId ?? "unknown-agent"}`;
@@ -450,7 +454,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onError: handleDictationError,
     canStart: canStartDictation,
     canConfirm: canConfirmDictation,
-    autoStopWhenHidden: { isVisible: isInputActive },
+    autoStopWhenHidden: { isVisible: isComposerActive },
     enableDuration: true,
   });
 
