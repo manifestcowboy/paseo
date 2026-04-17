@@ -346,3 +346,16 @@ npm run typecheck   # should now be clean
 2. Use Lightpanda for functional/DOM checks (does the route return 200, does the HTML contain expected elements)
 3. For visual/interaction testing, ask the user to do a manual check or use a headed browser session
 4. If you must automate, use Playwright from the orchestrator context (not a subagent) with the Chrome executablePath approach — but expect auth issues on localhost
+
+---
+
+## Always Push Convex Functions After Code Changes
+
+**Rule**: After editing files in `convex/`, always run `npx convex dev --once` (or `./node_modules/.bin/convex dev --once`) to deploy the functions to the Convex runtime. Git push does NOT deploy Convex functions.
+
+**What went wrong**: Added a `requireAdmin` bypass in `convex/auth.ts`, committed and pushed to git, but never ran `convex dev --once`. The deployed Convex functions were still the old version without the bypass. Spent hours debugging why the bypass "wasn't working" when it simply wasn't deployed.
+
+**How to avoid**:
+1. After ANY change to `convex/*.ts` files, run `npx convex dev --once`
+2. This is separate from `git push` — Convex has its own deployment
+3. Verify with `convex status` or check the Convex dashboard
