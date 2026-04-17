@@ -34,6 +34,10 @@ This is an npm workspace monorepo:
 
 Paseo also runs under the GAS global instruction system. Treat Paseo project rules as the local source of truth, then apply GAS/runtime rules from the active environment. If there is a conflict, Paseo project rules win.
 
+Before orchestrating, read `orchestrate.json` once and keep its defaults in working memory for the session.
+
+When spawning agents, use the appropriate Paseo skills and the appropriate GAS personas and skills for the role instead of defaulting to generic agents.
+
 ## Quick start
 
 ```bash

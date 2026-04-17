@@ -7,12 +7,14 @@
     "audit": "codex/gpt-5.4"
   },
   "preferences": [
-    "UI means styling and layout only — not React logic. React logic is impl work, not UI work.",
-    "Claude Opus is the right choice for anything artistic or human-skill-oriented: copywriting, naming, UX copy, visual design decisions, styling. Codex is the workhorse for everything mechanical.",
-    "For Notion task updates, use opencode/opencode-go/minimax-m2.7.",
-    "For testing, use opencode/opencode-go/minimax-m2.7.",
-    "Do not trust the UI model picker/label when OpenCode Go models are missing from the list.",
-    "With OpenCode Go models, after spawning, verify runtime model with `paseo agent inspect <agent-id>` and confirm Model is opencode-go/minimax-m2.7.",
-    "Whenever you spawn an agent, assign the appropriate persona for the role and attach the relevant GAS and Paseo skills for that agent's task."
+    "UI means styling, layout, copy, and design judgment only. React logic and other mechanical work are impl work, not UI work.",
+    "Claude is for artistic and human-judgment work. Codex is for coding, debugging, refactoring, and other mechanical work.",
+    "Give each agent one clear role: research, planning, implementation, testing, audit, or cleanup. Do not mix roles unless the task is small.",
+    "Use the appropriate Paseo skills and the appropriate GAS personas and skills for each agent role.",
+    "When agents run in parallel, give them separate file or task scopes.",
+    "Never use @everyone in Paseo chat rooms.",
+    "Do not archive agents you did not spawn for the current run.",
+    "If a stalled agent should continue the task, reload it and send a message telling it to resume the work.",
+    "If the same fix fails twice, stop repeating it. Reassess, change approach, or handle the issue directly."
   ]
 }
