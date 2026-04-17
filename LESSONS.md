@@ -49,22 +49,6 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 
 ---
 
-## Model Selection by Task Type
-
-**Rule**: Use the right model for each job. Don't waste expensive models on cheap work.
-
-| Task Type | Model | Why |
-|---|---|---|
-| Functional testing (routes, data, APIs) | Gemini Flash / minimax | Cheap, just checking results |
-| Visual UI testing (layout, screenshots) | Claude Sonnet + Chrome | Needs rendering + design eye |
-| UI/UX design and styling | Claude Opus | Creative judgment |
-| Implementation (React logic, backend) | Codex 5.3 | Mechanical code |
-| Debugging, deep investigation | Codex 5.4 | Deep reasoning |
-| Planning, architecture | Codex 5.4 | Complex tradeoffs |
-| Notion updates | minimax / Gemini | Simple structured writes |
-
----
-
 ## One Focused Task Per Agent
 
 **Rule**: Each agent gets one clear task. Don't mix research and implementation, or testing and fixing, in the same agent.
