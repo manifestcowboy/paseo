@@ -11,10 +11,11 @@
     "Claude is for artistic and human-judgment work. Codex is for coding, debugging, refactoring, and other mechanical work.",
     "Give each agent one clear role: research, planning, implementation, testing, audit, or cleanup. Do not mix roles unless the task is small.",
     "Use the appropriate Paseo skills and the appropriate GAS personas and skills for each agent role.",
+    "When spawning an agent, state the role, the expected outcome, and the check for success. Do not give only a technical change request.",
     "When agents run in parallel, give them separate file or task scopes.",
     "Never use @everyone in Paseo chat rooms.",
     "Do not archive agents you did not spawn for the current run.",
     "If a stalled agent should continue the task, reload it and send a message telling it to resume the work.",
-    "If the same fix fails twice, stop repeating it. Reassess, change approach, or handle the issue directly."
+    "If the same issue remains after two fix attempts, stop repeating the same prompt pattern. Find the root cause, change approach, and fix it surgically."
   ]
 }
