@@ -72,6 +72,18 @@ function resolveCliPackageInfo(): PackageInfo {
   });
 }
 
+function resolveTsxImportSpecifier(packageRoot: string): string {
+  try {
+    return esmRequire.resolve("tsx", { paths: [packageRoot] });
+  } catch (error) {
+    throw new Error(
+      `Unable to resolve local tsx from ${packageRoot}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 function resolvePackagedAsarPath(): string {
   return path.join(process.resourcesPath, "app.asar");
 }
@@ -135,7 +147,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
       label: "Daemon runner source",
       filePath: path.join(serverPackage.root, "scripts", "supervisor-entrypoint.ts"),
     }),
-    execArgv: ["--import", "tsx"],
+    execArgv: ["--import", resolveTsxImportSpecifier(serverPackage.root)],
   };
 }
 
@@ -171,7 +183,7 @@ export function resolveCliEntrypoint(): NodeEntrypointSpec {
       label: "CLI source entrypoint",
       filePath: path.join(cliPackage.root, "src", "index.ts"),
     }),
-    execArgv: ["--import", "tsx"],
+    execArgv: ["--import", resolveTsxImportSpecifier(cliPackage.root)],
   };
 }
 

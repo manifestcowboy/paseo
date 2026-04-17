@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { Buffer } from "node:buffer";
+import { createRequire } from "node:module";
 import dotenv from "dotenv";
 
 type WaitForServerOptions = {
@@ -224,10 +225,34 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   return offer as OfferPayload;
 }
 
-function loadPairingOfferFromCli(repoRoot: string, paseoHomePath: string): OfferPayload {
+function resolveLocalTsxImportSpecifier(repoRoot: string): string {
+  try {
+    const requireFromRepo = createRequire(path.join(repoRoot, "package.json"));
+    return requireFromRepo.resolve("tsx");
+  } catch (error) {
+    throw new Error(
+      `Unable to resolve local tsx from workspace at ${repoRoot}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+function loadPairingOfferFromCli(
+  repoRoot: string,
+  paseoHomePath: string,
+  tsxImportSpecifier: string,
+): OfferPayload {
   const stdout = execFileSync(
     process.execPath,
-    ["--import", "tsx", "packages/cli/src/index.ts", "daemon", "pair", "--json"],
+    [
+      "--import",
+      tsxImportSpecifier,
+      "packages/cli/src/index.ts",
+      "daemon",
+      "pair",
+      "--json",
+    ],
     {
       cwd: repoRoot,
       env: {
@@ -247,6 +272,7 @@ function loadPairingOfferFromCli(repoRoot: string, paseoHomePath: string): Offer
 async function waitForPairingOfferFromCli(args: {
   repoRoot: string;
   paseoHome: string;
+  tsxImportSpecifier: string;
   timeoutMs?: number;
 }): Promise<OfferPayload> {
   const timeoutMs = args.timeoutMs ?? 15000;
@@ -255,7 +281,7 @@ async function waitForPairingOfferFromCli(args: {
 
   while (Date.now() - start < timeoutMs) {
     try {
-      return loadPairingOfferFromCli(args.repoRoot, args.paseoHome);
+      return loadPairingOfferFromCli(args.repoRoot, args.paseoHome, args.tsxImportSpecifier);
     } catch (error) {
       lastError = error;
       await sleep(100);
@@ -271,6 +297,7 @@ async function waitForPairingOfferFromCli(args: {
 
 export default async function globalSetup() {
   const repoRoot = path.resolve(__dirname, "../../..");
+  const tsxImportSpecifier = resolveLocalTsxImportSpecifier(repoRoot);
   ensureRelayBuildArtifact(repoRoot);
   const envTestPath = path.join(repoRoot, ".env.test");
   if (existsSync(envTestPath)) {
@@ -477,9 +504,7 @@ export default async function globalSetup() {
     });
 
     const serverDir = path.resolve(__dirname, "../../..", "packages/server");
-    const tsxBin = execSync("which tsx").toString().trim();
-
-    daemonProcess = spawn(tsxBin, ["src/server/index.ts"], {
+    daemonProcess = spawn(process.execPath, ["--import", tsxImportSpecifier, "src/server/index.ts"], {
       cwd: serverDir,
       env: {
         ...process.env,
@@ -552,6 +577,7 @@ export default async function globalSetup() {
     const offer = await waitForPairingOfferFromCli({
       repoRoot,
       paseoHome,
+      tsxImportSpecifier,
     });
 
     process.env.E2E_DAEMON_PORT = String(port);
