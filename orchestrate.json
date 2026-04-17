@@ -6,16 +6,21 @@
     "planning": "codex/gpt-5.4",
     "audit": "codex/gpt-5.4"
   },
+  "testing": {
+    "ui_functional": "claude/sonnet",
+    "design_review": "claude/opus",
+    "security_audit": "codex/gpt-5.4",
+    "e2e_browser": "claude/sonnet",
+    "basic_functional": "opencode/google/antigravity-gemini-3-flash",
+    "documentation": "codex/gpt-5.3",
+    "quick_notes": "opencode/google/antigravity-gemini-3-flash"
+  },
   "preferences": [
-    "UI means styling, layout, copy, and design judgment only. React logic and other mechanical work are impl work, not UI work.",
-    "Claude is for artistic and human-judgment work. Codex is for coding, debugging, refactoring, and other mechanical work.",
-    "Give each agent one clear role: research, planning, implementation, testing, audit, or cleanup. Do not mix roles unless the task is small.",
-    "Use the appropriate Paseo skills and the appropriate GAS personas and skills for each agent role.",
-    "When spawning an agent, state the role, the expected outcome, and the check for success. Do not give only a technical change request.",
-    "When agents run in parallel, give them separate file or task scopes.",
-    "Never use @everyone in Paseo chat rooms.",
-    "Do not archive agents you did not spawn for the current run.",
-    "If a stalled agent should continue the task, reload it and send a message telling it to resume the work.",
-    "If the same issue remains after two fix attempts, stop repeating the same prompt pattern. Find the root cause, change approach, and fix it surgically."
+    "Claude handles artistic/design judgment. Codex handles all mechanical coding work. UI means styling and layout only — React logic is impl work.",
+    "Each agent gets one role (research, plan, implement, test, audit, or cleanup), the systemic expected outcome, and a success check. Assign the relevant GAS persona from agents/ and attach relevant GAS and Paseo skills to the agent prompt.",
+    "Parallel agents must have non-overlapping file scopes.",
+    "Never use @everyone in rooms. Never touch agents, files, or sessions you did not create for the current task.",
+    "Stalled agent → reload with paseo send and resume message. Spawn a fresh agent when the context is too long, the agent is unrecoverable, or a fresh start would be more efficient.",
+    "Prompt with the systemic outcome, not the instance. 'All voices must work' not 'fix Sarah.' After finding a bug, grep all sibling files for the same pattern and fix all occurrences. Every fix must work for future inputs too."
   ]
 }
