@@ -26,6 +26,8 @@ check_contains "packages/app/src/components/message.tsx" "setPreviewedImageIndex
 check_contains "packages/app/src/components/attachment-image-preview-modal.tsx" "getOverlayRoot" "lightbox renders via overlay root"
 check_contains "LESSONS.md" "## Our Customizations in This Fork" "lessons file keeps customization playbook"
 check_contains "LESSONS.md" "## Rebuild Server Dist After Upstream Sync" "lessons file keeps sync rebuild rule"
+check_contains "CUSTOM_CHANGELOG.md" "# CUSTOM_CHANGELOG.md" "custom changelog exists"
+check_contains "CUSTOM_CHANGELOG.md" "## Tracked Customizations" "custom changelog tracks fork scope"
 
 if [[ "$missing" -ne 0 ]]; then
   echo ""

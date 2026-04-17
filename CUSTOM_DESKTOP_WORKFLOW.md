@@ -25,33 +25,43 @@ Common artifact names include `.dmg` (macOS), `.exe` (Windows), and `.AppImage` 
 
 Important: official auto-updates install official binaries and will not include your local custom patches unless those patches are merged upstream.
 
-Use this flow to keep your custom behavior:
-
-1. Keep custom work on a dedicated branch (example: `custom/image-preview`).
-2. Sync latest upstream code into `main`.
-3. Rebase your custom branch on top of updated `main`.
-4. Resolve conflicts.
-5. Rebuild desktop from source with `npm run build:desktop`.
-
-Recommended commands:
+Use the one-command sync script:
 
 ```bash
-# one-time: add upstream remote if needed
-git remote add upstream https://github.com/getpaseo/paseo.git
-
-# sync latest upstream into local main
-git fetch upstream --tags
-git checkout main
-git rebase upstream/main
-
-# rebase your customization branch on latest main
-git checkout custom/image-preview
-git rebase main
-
-# verify + rebuild custom desktop app
-npm run typecheck
-npm run build:desktop
+npm run update:upstream:preserve
 ```
+
+What it does:
+
+1. Ensures clean `main`.
+2. Fetches `origin` + `upstream`.
+3. Rebases local `main` onto `origin/main`.
+4. Merges `upstream/main`.
+5. Preserves known customization files on conflict.
+6. Runs:
+   - `npm run verify:customizations`
+   - `npm run build --workspace=@getpaseo/server`
+   - `npm run typecheck`
+7. Appends upstream sync history to `CUSTOM_CHANGELOG.md`.
+8. Pushes to `origin/main`.
+
+Useful variants:
+
+```bash
+# run update flow but do not push
+npm run update:upstream:preserve:no-push
+
+# direct script call options
+./scripts/update-upstream-preserve-custom.sh --no-push --skip-typecheck
+```
+
+## Custom Changelog
+
+Fork customization history is tracked in:
+
+- `CUSTOM_CHANGELOG.md`
+
+This is separate from upstream `CHANGELOG.md`, so your customization notes are not overwritten by upstream release notes.
 
 ## Practical rule
 
