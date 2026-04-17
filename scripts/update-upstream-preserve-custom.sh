@@ -4,6 +4,13 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+MANIFEST_PATH="$REPO_ROOT/scripts/customization-manifest.sh"
+if [[ ! -f "$MANIFEST_PATH" ]]; then
+  echo "Missing customization manifest: $MANIFEST_PATH" >&2
+  exit 1
+fi
+source "$MANIFEST_PATH"
+
 NO_PUSH=0
 SKIP_TYPECHECK=0
 SKIP_INSTALLED_APP_SYNC=0
@@ -90,20 +97,6 @@ if git merge-base --is-ancestor "$UPSTREAM_REF" HEAD; then
 else
   DID_UPSTREAM_MERGE=1
 fi
-
-CUSTOM_FILES=(
-  "LESSONS.md"
-  "orchestrate.json"
-  "CUSTOM_DESKTOP_WORKFLOW.md"
-  "docs/CUSTOM_DESKTOP_WORKFLOW.md"
-  "CUSTOM_CHANGELOG.md"
-  "packages/app/src/components/attachment-image-preview-modal.tsx"
-  "packages/app/src/components/message-input.tsx"
-  "packages/app/src/components/message.tsx"
-  "packages/app/src/lib/overlay-root.ts"
-  "scripts/verify-customizations.sh"
-  "pr-notes/PR_NOTES_IMAGE_LIGHTBOX_AND_OPENCODE_ANTIGRAVITY.md"
-)
 
 if [[ "$DID_UPSTREAM_MERGE" -eq 1 ]]; then
   echo "[info] Merging $UPSTREAM_REF into main..."

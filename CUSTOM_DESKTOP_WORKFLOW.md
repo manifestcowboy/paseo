@@ -22,16 +22,18 @@ No DMG install step is required for routine updates.
 
 ## What gets retained
 
-The update flow is intentionally narrow. It keeps the files that matter:
+The canonical preserved file list lives in:
 
-- `packages/app/src/components/attachment-image-preview-modal.tsx`
-- `packages/app/src/components/message-input.tsx`
-- `packages/app/src/components/message.tsx`
-- `packages/app/src/lib/overlay-root.ts`
-- `orchestrate.json`
-- `LESSONS.md`
-- `CUSTOM_CHANGELOG.md`
-- `CUSTOM_DESKTOP_WORKFLOW.md`
+- `scripts/customization-manifest.sh`
+
+This avoids duplicating the same list across scripts and docs.
+
+When you add a new fork-only customization:
+
+1. Add the owned file paths to `scripts/customization-manifest.sh`
+2. Update `CUSTOM_CHANGELOG.md`
+3. Extend `scripts/verify-customizations.sh` if the new behavior needs explicit checks
+4. Run `npm run verify:customizations`
 
 ## Keep customization when updating Paseo
 

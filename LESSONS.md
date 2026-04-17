@@ -163,19 +163,21 @@ git add -A && git commit && git push origin main
 
 ## Our Customizations in This Fork
 
-**What we've added** (protect these during upstream syncs):
+**What we've added**:
 
-| File | What it does |
-|---|---|
-| `packages/app/src/components/attachment-image-preview-modal.tsx` | Full-screen image lightbox — new file, no upstream conflict |
-| `packages/app/src/components/message-input.tsx` | Tap thumbnail to preview; separate remove button; uses lightbox modal |
-| `packages/app/src/components/message.tsx` | Wired to lightbox in user message image display |
-| `packages/app/src/lib/overlay-root.ts` | 1-line addition for portal root |
-| `orchestrate.json` | Agent orchestration config (root of repo) |
-| `LESSONS.md` | This file |
-| `CUSTOM_DESKTOP_WORKFLOW.md` | Custom desktop workflow notes |
-| `scripts/sync-installed-app-customizations.sh` | Patches the installed `/Applications/Paseo.app` with the current customized web bundle |
-| `pr-notes/` | PR documentation |
+- The canonical preserved file list lives in `scripts/customization-manifest.sh`.
+- Current fork-owned areas include:
+  - image lightbox customization in `packages/app/src/components/*` and `packages/app/src/lib/overlay-root.ts`
+  - local orchestration/config guidance in `orchestrate.json`, `AGENTS.md`, and `LESSONS.md`
+  - installed-app maintenance flow in `CUSTOM_DESKTOP_WORKFLOW.md` and `scripts/sync-installed-app-customizations.sh`
+  - fork history in `CUSTOM_CHANGELOG.md`
+  - supporting PR notes in `pr-notes/`
+
+**How to keep new customizations persistent**:
+1. Add the owned file path(s) to `scripts/customization-manifest.sh`.
+2. Update `CUSTOM_CHANGELOG.md`.
+3. Extend `scripts/verify-customizations.sh` when the customization introduces behavior that should be checked automatically.
+4. Run `npm run verify:customizations`.
 
 **Files that are safe to take 100% from upstream** (no custom changes):
 - `opencode-agent.ts` — we reverted a cherry-pick; upstream's full version is correct
