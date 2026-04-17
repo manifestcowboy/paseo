@@ -30,6 +30,17 @@ This is an npm workspace monorepo:
 | [SECURITY.md](SECURITY.md) | Relay threat model, E2E encryption, DNS rebinding, agent auth |
 | [CUSTOM_DESKTOP_WORKFLOW.md](CUSTOM_DESKTOP_WORKFLOW.md) | Fork-only update flow and installed-app customization sync |
 
+## GAS References
+
+This fork also relies on GAS for shared orchestration policy. Keep this section short and use GAS as the external source of truth instead of duplicating its rules here.
+
+- Read project-local `AGENTS.md` first for Paseo-specific behavior.
+- Then apply GAS master instructions from [`/Users/reo/Dev/GAS/AGENTS.md`](/Users/reo/Dev/GAS/AGENTS.md).
+- In Codex sessions, also apply the runtime overlay from [`/Users/reo/Dev/GAS/CODEX.md`](/Users/reo/Dev/GAS/CODEX.md).
+- For orchestration policy and task-structure defaults, use [`/Users/reo/Dev/GAS/rules/workflow-orchestration.md`](/Users/reo/Dev/GAS/rules/workflow-orchestration.md).
+- If the user explicitly requests strict plan-first lifecycle behavior, use [`/Users/reo/Dev/GAS/rules/agentic-workflow.md`](/Users/reo/Dev/GAS/rules/agentic-workflow.md).
+- If Paseo project rules conflict with GAS defaults, Paseo project rules win for this repository.
+
 ## Quick start
 
 ```bash
