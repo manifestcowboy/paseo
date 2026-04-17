@@ -23,7 +23,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 
 **Rule**: Test agents (Gemini Flash, minimax, any cheap model) report PASS/FAIL only. They never edit source files.
 
-**What went wrong**: A Gemini Flash agent was asked to test bulk operations. Instead of just reporting failures, it started editing Convex backend files to "fix" issues it found. The changes were low quality and had to be reverted.
+**What went wrong**: A Gemini Flash agent was asked to test bulk operations. Instead of just reporting failures, it started editing backend source files to "fix" issues it found. The changes were low quality and had to be reverted.
 
 **How to avoid**:
 1. Always include "Do NOT edit any files" in test agent prompts.
@@ -35,15 +35,17 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 
 ## Codex Rate Limit Recovery
 
-**Rule**: When a Codex agent stalls, reload it — never archive it.
+**Rule**: Use the external Codex auto-recovery script first (it is not part of Paseo), then fall back to manual Paseo CLI recovery if the agent is still stalled.
 
-**What went wrong**: Codex agents hit rate limits and appeared stuck. The orchestrator archived them and launched fresh agents, losing all accumulated context.
+**What went wrong**: Codex agents appeared stalled from low usage. Instead of resuming them, they were replaced, which lost useful context and interrupted ongoing work.
 
 **How to avoid**:
-1. Never archive a stalled Codex agent — this destroys context permanently.
-2. Send a resume message: `paseo send <id> "Resume your work from where you left off."`
-3. The automatic account switcher rotates Codex accounts when usage drops below 10%. Reloading picks up the new account.
-4. Only archive after 3+ failed reload attempts AND the agent is truly dead.
+1. When Codex usage drops below 10%, let the external script run first: it switches Codex account, reloads recently active Codex agents in Paseo (last ~10 minutes), and sends a follow-up resume message.
+2. If the agent is still stalled after auto-recovery, run manual recovery with Paseo CLI:
+   - `paseo agent reload <id>`
+   - `paseo agent send <id> "Resume your work from where you left off."`
+3. If you still want the same agent to continue the task, always send the resume message after reload; without it, work may not continue.
+4. If the agent thread is too long and quality is dropping from context limits, launch a new agent and hand off the current task state.
 
 ---
 
@@ -94,53 +96,17 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **Rule**: When running parallel agents, assign non-overlapping file scopes to prevent merge conflicts.
 
 **Example split**:
-- Backend agent: `convex/`, `lib/server/`, `app/api/` only
-- UI agent: `app/(dashboard)/`, `components/`, `features/`, `contexts/` only
-- Research agent: `tasks/` only (no source code)
+- Backend agent: `packages/server/`, `packages/cli/`, `packages/relay/` only
+- UI agent: `packages/app/`, `packages/desktop/`, `packages/website/` only
+- Research agent: `docs/`, `LESSONS.md`, `scripts/` only (no source code)
 
 State this explicitly in each agent's prompt: "Do NOT touch files in X directory."
 
 ---
 
-## Gemini Flash Stalls on Complex Multi-Step Tasks
-
-**Rule**: Gemini Flash 3 (Antigravity) works for simple tasks but consistently stalls on complex multi-step browser testing. Use Sonnet for browser-based testing.
-
-**What went wrong**: Gemini Flash was launched 4 times for browser testing. Each time it loaded skills/context but never started executing tool calls. The agent appeared "running" but UpdatedAt stopped advancing.
-
-**How to avoid**:
-1. Simple functional checks (does this route exist, does this API respond) → Gemini Flash is fine
-2. Multi-step browser testing (login → navigate → click → verify → screenshot → report) → Use Sonnet
-3. If Gemini stalls for 15+ minutes with no tool calls, switch to Sonnet — don't keep retrying
-
----
-
-## CLI Testing Fails on Admin-Gated Functions
-
-**Rule**: `convex run` from CLI cannot pass Better Auth sessions. All `requireAdmin`-gated functions fail with "Unauthenticated" when called via CLI.
-
-**What went wrong**: Test agents tried to verify bulk operations via `convex run` CLI. Every test returned "Unauthenticated" — not because the code was broken, but because CLI has no auth context.
-
-**How to avoid**:
-1. Test admin-gated functions through the browser UI (Chrome engine), not CLI
-2. CLI is only useful for non-auth-gated queries or internal mutations
-3. If a query is needed before auth resolves (like voice list for player), remove `requireAdmin` from it
-
----
-
-## Restart Dev Server After Branch Merges
-
-**Rule**: After merging new routes/pages to main, restart the Next.js dev server. New routes return 404 until the server picks them up.
-
-**What went wrong**: The live globe expansion page was merged to main but returned 404 during verification. The dev server was still running on the pre-merge code.
-
-**How to avoid**: Kill and restart the dev server after every branch merge that adds new routes.
-
----
-
 ## Long Orchestrator Sessions Degrade Quality
 
-**Rule**: Start a fresh orchestrator session after ~50 agent cycles or when context compression becomes visible. Use memory system + handoff prompt for continuity.
+**Rule**: Start a fresh orchestrator session after ~50 agent cycles or when context compression becomes visible. If an individual agent thread grows too long and quality drops, hand off and start a fresh agent.
 
 **What went wrong**: After 20+ hours and 50+ agent spawns, the orchestrator was losing detail from earlier decisions, repeating mistakes (wrong --mode flags, wrong model choices), and the compressed context made it harder to reason about the full project state.
 
@@ -175,9 +141,9 @@ State this explicitly in each agent's prompt: "Do NOT touch files in X directory
 **How to avoid**:
 1. "Code done" and "verified working" are two completely different statuses. Use `implemented_not_verified` until browser-tested.
 2. Never tell the user "X is fixed" unless you or an agent actually performed the action in a browser and saw the correct result.
-3. If browser testing fails (agent-browser broken, Playwright auth issues), say so explicitly — don't report the feature as done.
+3. If browser testing is blocked by environment or tooling, say so explicitly — don't report the feature as done.
 4. Agent self-reports of "PASS" based on code review are worthless for functional verification. Require screenshot evidence or runtime output.
-5. When in doubt, use the content-pipeline-status.md status levels: `verified_working` requires actual testing, not just compilation.
+5. Keep explicit statuses in updates (`implemented_not_verified` vs `verified_working`) so verification state is always clear.
 
 ---
 
@@ -224,6 +190,7 @@ git add -A && git commit && git push origin main
 | `orchestrate.json` | Agent orchestration config (root of repo) |
 | `LESSONS.md` | This file |
 | `CUSTOM_DESKTOP_WORKFLOW.md` | Custom desktop workflow notes |
+| `scripts/sync-installed-app-customizations.sh` | Patches the installed `/Applications/Paseo.app` with the current customized web bundle |
 | `pr-notes/` | PR documentation |
 
 **Files that are safe to take 100% from upstream** (no custom changes):
@@ -252,16 +219,19 @@ npm run typecheck   # should now be clean
 
 ---
 
-## GitHub Failure Notifications Can Be Stale
+## Installed App Must Be Patched After Upstream Update
 
-**Rule**: Before fixing "current CI failures," check the latest completed GitHub Actions run instead of trusting delayed mobile notifications or an earlier summary.
+**Rule**: Updating the forked repo is not enough by itself. After upstream sync, patch the installed `/Applications/Paseo.app` from the current repo so the running app actually uses the customized renderer bundle.
 
-**What went wrong**: The phone notifications said `server-tests` and `cli-tests` were failing. On the latest `main` workflow run, those jobs were already green. The real remaining failures were `app-tests` and `playwright`.
+**What went wrong**: The repo contained the lightbox customization, verification passed, and the fork was on the latest upstream version. But the installed app was still serving an older `app-dist` bundle inside `/Applications/Paseo.app`, so restarting Paseo did not show the customization.
 
 **How to avoid**:
-1. Check the latest workflow run first.
-2. Compare the exact failed jobs on that run against local reproduction.
-3. Treat old notifications as hints, not source of truth.
+1. Treat repo sync and installed-app sync as two separate steps.
+2. After upstream merge + verification, run the installed-app sync step:
+   - `npm run sync:installed:app`
+3. Prefer the one-command path for routine updates:
+   - `npm run update:upstream:preserve`
+4. If the app still looks upstream-clean after a restart, compare the installed app bundle timestamps before assuming the code merge failed.
 
 ---
 
@@ -304,23 +274,6 @@ npm run typecheck   # should now be clean
 
 ---
 
-## Playwright CI Should Not Hard-Fail On Missing Speech Backends
-
-**Rule**: App E2E global setup must not crash the whole Playwright suite just because OpenAI speech and local speech models are both unavailable, unless the suite explicitly needs dictation or voice coverage.
-
-**What went wrong**: GitHub Actions `playwright` failed before any tests ran. `packages/app/e2e/global-setup.ts` probed `OPENAI_API_KEY`, then fell back to `~/.paseo/models/local-speech`, and threw when neither was available. That made unrelated browser tests fail even though they do not exercise dictation.
-
-**How to avoid**:
-1. In global setup, treat speech as optional for non-dictation suites.
-2. If OpenAI speech is unavailable and local speech models are missing, continue with:
-   - `PASEO_DICTATION_ENABLED=0`
-   - `PASEO_VOICE_MODE_ENABLED=0`
-3. Only enable local speech providers when local models are actually present.
-4. Reserve hard failures for suites that explicitly verify dictation or voice features.
-5. When reproducing CI locally, simulate the runner with no speech backend by clearing `OPENAI_API_KEY` and pointing `HOME` at a temp directory.
-
----
-
 ## Keep One Worktree, Not Five
 
 **Rule**: Never accumulate multiple git worktrees of the same repo. Use one (`~/paseo` on `main`) and create temporary worktrees only when actively needed.
@@ -332,30 +285,3 @@ npm run typecheck   # should now be clean
 2. If you need an isolated branch for a task: `git worktree add ../paseo-temp feature/xyz`
 3. Remove it when done: `git worktree remove ../paseo-temp`
 4. Never let worktrees pile up — they each duplicate `node_modules`
-
----
-
-## Browser Testing Is Unreliable via Subagents
-
-**Rule**: agent-browser interactive commands and Playwright via Paseo subagents are currently unreliable. Plan for this.
-
-**What went wrong**: Multiple Sonnet agents were launched for browser testing. All failed — agent-browser daemon hangs on interactive commands, Playwright in subagents can't authenticate through the password gate. Hours of tokens burned with zero test results.
-
-**How to avoid**:
-1. Don't launch browser test agents as the primary verification strategy
-2. Use Lightpanda for functional/DOM checks (does the route return 200, does the HTML contain expected elements)
-3. For visual/interaction testing, ask the user to do a manual check or use a headed browser session
-4. If you must automate, use Playwright from the orchestrator context (not a subagent) with the Chrome executablePath approach — but expect auth issues on localhost
-
----
-
-## Always Push Convex Functions After Code Changes
-
-**Rule**: After editing files in `convex/`, always run `npx convex dev --once` (or `./node_modules/.bin/convex dev --once`) to deploy the functions to the Convex runtime. Git push does NOT deploy Convex functions.
-
-**What went wrong**: Added a `requireAdmin` bypass in `convex/auth.ts`, committed and pushed to git, but never ran `convex dev --once`. The deployed Convex functions were still the old version without the bypass. Spent hours debugging why the bypass "wasn't working" when it simply wasn't deployed.
-
-**How to avoid**:
-1. After ANY change to `convex/*.ts` files, run `npx convex dev --once`
-2. This is separate from `git push` — Convex has its own deployment
-3. Verify with `convex status` or check the Convex dashboard

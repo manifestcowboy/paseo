@@ -25,9 +25,12 @@ check_contains "packages/app/src/components/message.tsx" "AttachmentImagePreview
 check_contains "packages/app/src/components/message.tsx" "setPreviewedImageIndex" "message renderer opens image preview"
 check_contains "packages/app/src/components/attachment-image-preview-modal.tsx" "getOverlayRoot" "lightbox renders via overlay root"
 check_contains "LESSONS.md" "## Our Customizations in This Fork" "lessons file keeps customization playbook"
+check_contains "LESSONS.md" "## Installed App Must Be Patched After Upstream Update" "lessons file keeps installed app sync rule"
 check_contains "LESSONS.md" "## Rebuild Server Dist After Upstream Sync" "lessons file keeps sync rebuild rule"
 check_contains "CUSTOM_CHANGELOG.md" "# CUSTOM_CHANGELOG.md" "custom changelog exists"
 check_contains "CUSTOM_CHANGELOG.md" "## Tracked Customizations" "custom changelog tracks fork scope"
+check_contains "package.json" "\"sync:installed:app\"" "package scripts include installed app sync command"
+check_contains "scripts/sync-installed-app-customizations.sh" "rsync -a --delete" "installed app sync script patches app-dist in place"
 
 if [[ "$missing" -ne 0 ]]; then
   echo ""

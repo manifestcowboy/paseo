@@ -1,49 +1,44 @@
 # Custom Desktop Workflow (Keep Local Customizations)
 
-This project can ship a desktop app that includes local customizations (like image preview in composer) without requiring the Expo dev server.
+This project keeps a few local customizations on top of upstream Paseo. The goal is simple: update upstream, retain those files, and patch the installed `/Applications/Paseo.app` automatically.
 
-## Build a desktop app from this repo (no dev server)
+## Normal update flow
 
 Run from repo root:
-
-```bash
-npm run typecheck
-npm run build:desktop
-```
-
-This produces desktop artifacts from your local source code. You can install/use that build directly.
-
-## Where desktop artifacts are written
-
-Electron builder outputs into:
-
-- `packages/desktop/release/`
-
-Common artifact names include `.dmg` (macOS), `.exe` (Windows), and `.AppImage` (Linux), depending on platform/build settings.
-
-## Keep customization when updating Paseo
-
-Important: official auto-updates install official binaries and will not include your local custom patches unless those patches are merged upstream.
-
-Use the one-command sync script:
 
 ```bash
 npm run update:upstream:preserve
 ```
 
-What it does:
+This is the normal path. It now:
 
-1. Ensures clean `main`.
-2. Fetches `origin` + `upstream`.
-3. Rebases local `main` onto `origin/main`.
-4. Merges `upstream/main`.
-5. Preserves known customization files on conflict.
-6. Runs:
-   - `npm run verify:customizations`
-   - `npm run build --workspace=@getpaseo/server`
-   - `npm run typecheck`
-7. Appends upstream sync history to `CUSTOM_CHANGELOG.md`.
-8. Pushes to `origin/main`.
+1. Updates your fork from `origin` and `upstream`
+2. Preserves the known customization files
+3. Verifies the custom code is still present
+4. Rebuilds the current web bundle from this repo
+5. Patches the installed `/Applications/Paseo.app` in place
+
+No DMG install step is required for routine updates.
+
+## What gets retained
+
+The update flow is intentionally narrow. It keeps the files that matter:
+
+- `packages/app/src/components/attachment-image-preview-modal.tsx`
+- `packages/app/src/components/message-input.tsx`
+- `packages/app/src/components/message.tsx`
+- `packages/app/src/lib/overlay-root.ts`
+- `orchestrate.json`
+- `LESSONS.md`
+- `CUSTOM_CHANGELOG.md`
+- `CUSTOM_DESKTOP_WORKFLOW.md`
+
+## Keep customization when updating Paseo
+
+The important distinction is:
+
+- Upstream auto-updates replace the installed app with upstream bits
+- Our custom flow reapplies the local renderer customization into the installed app after the code update
 
 Useful variants:
 
@@ -51,8 +46,11 @@ Useful variants:
 # run update flow but do not push
 npm run update:upstream:preserve:no-push
 
-# direct script call options
-./scripts/update-upstream-preserve-custom.sh --no-push --skip-typecheck
+# skip installed app patching if you only want the repo updated
+./scripts/update-upstream-preserve-custom.sh --skip-installed-app-sync
+
+# patch the installed app directly from the current repo state
+npm run sync:installed:app
 ```
 
 ## Custom Changelog
@@ -63,6 +61,10 @@ Fork customization history is tracked in:
 
 This is separate from upstream `CHANGELOG.md`, so your customization notes are not overwritten by upstream release notes.
 
+## DMG artifacts
+
+Desktop artifacts in `packages/desktop/release/` are only for fresh installs or explicit packaging work. They are not required for the normal update flow.
+
 ## Practical rule
 
-If you want to guarantee this customization stays, run your own custom-built desktop artifact after each update/rebase cycle.
+If the installed app ever looks upstream-clean after an update, run `npm run sync:installed:app`. That reapplies the current repo customizations to `/Applications/Paseo.app` directly.

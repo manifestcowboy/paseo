@@ -6,6 +6,7 @@ cd "$REPO_ROOT"
 
 NO_PUSH=0
 SKIP_TYPECHECK=0
+SKIP_INSTALLED_APP_SYNC=0
 
 usage() {
   cat <<'EOF'
@@ -14,6 +15,7 @@ Usage: ./scripts/update-upstream-preserve-custom.sh [options]
 Options:
   --no-push          Do not push to origin/main after successful update
   --skip-typecheck   Skip npm run typecheck
+  --skip-installed-app-sync  Do not patch /Applications/Paseo.app after update
   -h, --help         Show this help
 
 Workflow:
@@ -23,8 +25,9 @@ Workflow:
   4) Merges upstream/main
   5) Auto-resolves known customization conflicts in favor of local fork files
   6) Runs verification (customization checks, server build, typecheck)
-  7) Appends an entry to CUSTOM_CHANGELOG.md when upstream was merged
-  8) Pushes to origin/main (unless --no-push)
+  7) Builds the current app web bundle and patches the installed Paseo.app in place
+  8) Appends an entry to CUSTOM_CHANGELOG.md when upstream was merged
+  9) Pushes to origin/main (unless --no-push)
 EOF
 }
 
@@ -36,6 +39,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-typecheck)
       SKIP_TYPECHECK=1
+      shift
+      ;;
+    --skip-installed-app-sync)
+      SKIP_INSTALLED_APP_SYNC=1
       shift
       ;;
     -h|--help)
@@ -147,6 +154,16 @@ else
   echo "[info] Skipping typecheck (--skip-typecheck)."
 fi
 
+echo "[info] Building current app web bundle..."
+npm run build:web --workspace=@getpaseo/app
+
+if [[ "$SKIP_INSTALLED_APP_SYNC" -eq 0 ]]; then
+  echo "[info] Syncing customizations into the installed Paseo app..."
+  ./scripts/sync-installed-app-customizations.sh --no-build-web
+else
+  echo "[info] Skipping installed app sync (--skip-installed-app-sync)."
+fi
+
 AFTER_HEAD="$(git rev-parse --short HEAD)"
 UPSTREAM_SHORT="$(git rev-parse --short "$UPSTREAM_REF")"
 UPSTREAM_TAG="$(git describe --tags --abbrev=0 "$UPSTREAM_REF" 2>/dev/null || echo "unreleased")"
@@ -163,6 +180,8 @@ if [[ "$DID_UPSTREAM_MERGE" -eq 1 ]]; then
   - \`npm run verify:customizations\`
   - \`npm run build --workspace=@getpaseo/server\`
   - \`npm run typecheck\`
+  - \`npm run build:web --workspace=@getpaseo/app\`
+  - \`./scripts/sync-installed-app-customizations.sh --no-build-web\`
 - Local head moved: \`${BEFORE_HEAD}\` -> \`${AFTER_HEAD}\`
 EOF
 

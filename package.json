@@ -24,6 +24,7 @@
     "build:daemon": "npm run build --workspace=@getpaseo/highlight && npm run build --workspace=@getpaseo/relay && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "verify:customizations": "./scripts/verify-customizations.sh",
+    "sync:installed:app": "./scripts/sync-installed-app-customizations.sh",
     "update:upstream:preserve": "./scripts/update-upstream-preserve-custom.sh",
     "update:upstream:preserve:no-push": "./scripts/update-upstream-preserve-custom.sh --no-push",
     "typecheck:daemon": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",
