@@ -28,6 +28,7 @@ This is an npm workspace monorepo:
 | [docs/ANDROID.md](docs/ANDROID.md) | App variants, local/cloud builds, EAS workflows |
 | [docs/DESIGN.md](docs/DESIGN.md) | How to design features before implementation |
 | [SECURITY.md](SECURITY.md) | Relay threat model, E2E encryption, DNS rebinding, agent auth |
+| [CUSTOM_DESKTOP_WORKFLOW.md](CUSTOM_DESKTOP_WORKFLOW.md) | Fork-only update flow and installed-app customization sync |
 
 ## Quick start
 
@@ -55,6 +56,9 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
   - For full suite verification, push to CI and check GitHub Actions instead.
 - **Always run typecheck after every change.**
 - **Run `npm run format` before committing.** This repo uses Biome for formatting. Do not manually fix formatting — let the formatter handle it.
+- **This fork has local customizations.** For routine upstream updates, use `npm run update:upstream:preserve`. If the installed app looks upstream-clean afterward, run `npm run sync:installed:app`.
+- **The canonical preserved customization list lives in `scripts/customization-manifest.sh`.** When you add a new fork-only customization, update that manifest in the same commit.
+- **When adding a new fork-only customization, also update `CUSTOM_CHANGELOG.md` and extend `scripts/verify-customizations.sh` if the behavior needs explicit verification.**
 - **NEVER make breaking changes to WebSocket or message schemas.** The primary compatibility path is old mobile app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Every schema change MUST be backward-compatible for old clients against new daemons:
   - New fields: always `.optional()` with a sensible default or `.transform()` fallback.
   - Never change a field from optional to required.
