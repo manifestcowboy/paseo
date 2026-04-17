@@ -272,3 +272,33 @@ npm run typecheck   # should now be clean
 2. If you need an isolated branch for a task: `git worktree add ../paseo-temp feature/xyz`
 3. Remove it when done: `git worktree remove ../paseo-temp`
 4. Never let worktrees pile up — they each duplicate `node_modules`
+
+---
+
+## Fix the System, Not the Symptom
+
+**Rule**: When a user reports "Sarah's voice doesn't work," the expected outcome is "ALL voices work for any content." Never fix one instance of a systemic problem. Find the root cause and fix it so every current and future case works.
+
+**What went wrong**: User reported Sarah's voice wasn't playing. Orchestrator prompted agent: "fix Sarah voice." Agent fixed voiceId mapping for Sarah. Then Roger broke — same root cause, different voice. Three rounds of back-and-forth, each fixing one voice, when the real issue was voiceId → providerVoiceId resolution for ALL voices.
+
+**How to avoid**:
+1. Agent prompts must state the systemic outcome: "Voice playback must work for ANY voice — current and future."
+2. Never scope the expected outcome to a specific instance. Mention instances only as examples of the symptom: "e.g., Sarah is broken, but the fix must work for all voices."
+3. After identifying a bug, grep the codebase for the same pattern in all related files. Fix ALL occurrences in one pass.
+4. Require agents to test with multiple inputs: "Verify with at least 2 different voices and 2 different languages."
+5. Before declaring done, ask: "If we add a new voice/language/content type tomorrow, does this still work without code changes?"
+6. This applies to GAS's core principle "Fix root cause, not band-aids" (AGENTS.md:189) — extend it from fixing the cause to fixing it for every instance of that cause.
+
+---
+
+## Anticipate Adjacent Breakage
+
+**Rule**: When fixing one feature, check whether the same bug pattern exists in ALL related features. If the affirmation table has a missing dependency in useMemo, check tracks table, playlists table, soundscapes table — they likely share the same pattern.
+
+**What went wrong**: A useMemo dependency bug (player not in deps array) was fixed in the soundscapes table. Two days later, the same bug was found in the affirmation table. Then in the tracks table. Each time a new agent was spawned that had to re-discover the same pattern. Three separate fix rounds for one root cause.
+
+**How to avoid**:
+1. After fixing a bug in one component, grep for the same pattern in sibling components.
+2. If a component exists in 4 tables (affirmations, tracks, playlists, soundscapes), the fix applies to all 4 in one commit.
+3. Extract repeated logic into shared functions or hooks to prevent the same bug from recurring in copies.
+4. When the orchestrator writes a prompt, explicitly list ALL files that share the pattern: "Fix this in affirmations-table.tsx, tracks-table.tsx, playlists-table.tsx, AND soundscapes-table.tsx."
