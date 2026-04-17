@@ -88,6 +88,7 @@ CUSTOM_FILES=(
   "LESSONS.md"
   "orchestrate.json"
   "CUSTOM_DESKTOP_WORKFLOW.md"
+  "docs/CUSTOM_DESKTOP_WORKFLOW.md"
   "CUSTOM_CHANGELOG.md"
   "packages/app/src/components/attachment-image-preview-modal.tsx"
   "packages/app/src/components/message-input.tsx"
