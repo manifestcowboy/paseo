@@ -245,14 +245,7 @@ function loadPairingOfferFromCli(
 ): OfferPayload {
   const stdout = execFileSync(
     process.execPath,
-    [
-      "--import",
-      tsxImportSpecifier,
-      "packages/cli/src/index.ts",
-      "daemon",
-      "pair",
-      "--json",
-    ],
+    ["--import", tsxImportSpecifier, "packages/cli/src/index.ts", "daemon", "pair", "--json"],
     {
       cwd: repoRoot,
       env: {
@@ -504,36 +497,40 @@ export default async function globalSetup() {
     });
 
     const serverDir = path.resolve(__dirname, "../../..", "packages/server");
-    daemonProcess = spawn(process.execPath, ["--import", tsxImportSpecifier, "src/server/index.ts"], {
-      cwd: serverDir,
-      env: {
-        ...process.env,
-        PASEO_HOME: paseoHome,
-        PASEO_SERVER_ID: "srv_e2e_test_daemon",
-        PASEO_LISTEN: `0.0.0.0:${port}`,
-        PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
-        PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-        PASEO_DICTATION_ENABLED: speechEnabled ? "1" : "0",
-        PASEO_VOICE_MODE_ENABLED: speechEnabled ? "1" : "0",
-        ...(speechProvider === "openai"
-          ? {
-              PASEO_DICTATION_STT_PROVIDER: "openai",
-              PASEO_VOICE_STT_PROVIDER: "openai",
-              PASEO_VOICE_TTS_PROVIDER: "openai",
-            }
-          : speechProvider === "local"
+    daemonProcess = spawn(
+      process.execPath,
+      ["--import", tsxImportSpecifier, "src/server/index.ts"],
+      {
+        cwd: serverDir,
+        env: {
+          ...process.env,
+          PASEO_HOME: paseoHome,
+          PASEO_SERVER_ID: "srv_e2e_test_daemon",
+          PASEO_LISTEN: `0.0.0.0:${port}`,
+          PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
+          PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
+          PASEO_DICTATION_ENABLED: speechEnabled ? "1" : "0",
+          PASEO_VOICE_MODE_ENABLED: speechEnabled ? "1" : "0",
+          ...(speechProvider === "openai"
             ? {
-                PASEO_DICTATION_STT_PROVIDER: "local",
-                PASEO_VOICE_STT_PROVIDER: "local",
-                PASEO_VOICE_TTS_PROVIDER: "local",
+                PASEO_DICTATION_STT_PROVIDER: "openai",
+                PASEO_VOICE_STT_PROVIDER: "openai",
+                PASEO_VOICE_TTS_PROVIDER: "openai",
               }
-            : {}),
-        ...(localModelsDir ? { PASEO_LOCAL_MODELS_DIR: localModelsDir } : {}),
-        NODE_ENV: "development",
+            : speechProvider === "local"
+              ? {
+                  PASEO_DICTATION_STT_PROVIDER: "local",
+                  PASEO_VOICE_STT_PROVIDER: "local",
+                  PASEO_VOICE_TTS_PROVIDER: "local",
+                }
+              : {}),
+          ...(localModelsDir ? { PASEO_LOCAL_MODELS_DIR: localModelsDir } : {}),
+          NODE_ENV: "development",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false,
       },
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
-    });
+    );
 
     let stdoutBuffer = "";
     daemonProcess.stdout?.on("data", (data: Buffer) => {
