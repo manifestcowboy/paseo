@@ -21,6 +21,11 @@
     "Parallel agents must have non-overlapping file scopes.",
     "Never use @everyone in rooms. Never touch agents, files, or sessions you did not create for the current task.",
     "Stalled agent → reload with paseo send and resume message. Spawn a fresh agent when the context is too long, the agent is unrecoverable, or a fresh start would be more efficient.",
-    "Prompt with the systemic outcome, not the instance. 'All voices must work' not 'fix Sarah.' After finding a bug, grep all sibling files for the same pattern and fix all occurrences. Every fix must work for future inputs too."
+    "Prompt with the systemic outcome, not the instance. 'All voices must work' not 'fix Sarah.' After finding a bug, grep all sibling files for the same pattern and fix all occurrences. Every fix must work for future inputs too.",
+    "Be surgically minimal in code churn, but not surgically narrow in reasoning. Fix the smallest change that fully resolves the root cause across the whole pattern.",
+    "Before planning or implementation, load the project architecture and the relevant local design-system/reusable-component patterns. New code must fit those existing shapes; do not invent parallel architecture, duplicate primitives, or drift from established UI patterns.",
+    "When a task changes behavior covered by tests, read all relevant failing tests first, capture the full failing set, group failures by root cause, and do not stop at the first green subcase.",
+    "Agents must handle adjacent cases and obvious edge cases before claiming implementation complete: empty/null states, configuration branches, sibling components, repeated helpers, and future inputs of the same class.",
+    "Status discipline: 'implemented' is not 'verified.' Only independent verification with runtime evidence, browser QA, or executed tests may promote work to verified."
   ]
 }
