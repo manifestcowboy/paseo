@@ -8,7 +8,6 @@ import {
   TextInputContentSizeChangeEventData,
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
-  Image,
   BackHandler,
 } from "react-native";
 import {
@@ -21,7 +20,7 @@ import {
   forwardRef,
 } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, MicOff, ArrowUp, Paperclip, Plus, X, Square } from "lucide-react-native";
+import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
@@ -36,39 +35,62 @@ import {
   filesToImageAttachments,
 } from "@/utils/image-attachments-from-files";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import type { ComposerAttachment } from "@/attachments/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { formatShortcut } from "@/utils/format-shortcut";
+import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
-import { AttachmentImagePreviewModal } from "@/components/attachment-image-preview-modal";
-import {
-  markScrollInvestigationEvent,
-  markScrollInvestigationRender,
-} from "@/utils/scroll-jank-investigation";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { markScrollInvestigationEvent, markScrollInvestigationRender } from "@/utils/scroll-jank";
 import { isWeb } from "@/constants/platform";
+import { useComposerHeightMirror } from "./composer-height-mirror";
 
 export type ImageAttachment = AttachmentMetadata;
 
 export interface MessagePayload {
   text: string;
-  images?: ImageAttachment[];
+  attachments: ComposerAttachment[];
+  cwd: string;
   /** When true, bypasses queue and sends immediately even if agent is running */
   forceSend?: boolean;
+}
+
+export interface AttachmentMenuItem {
+  id: string;
+  label: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  icon?: React.ReactElement | null;
 }
 
 export interface MessageInputProps {
   value: string;
   onChangeText: (text: string) => void;
   onSubmit: (payload: MessagePayload) => void;
+  /** When true, the submit button is enabled even without text or images (e.g. external attachment selected). */
+  hasExternalContent?: boolean;
+  /** When true, the submit button stays visible and can submit even with no content. */
+  allowEmptySubmit?: boolean;
+  /** Optional accessibility label for the primary submit button. */
+  submitButtonAccessibilityLabel?: string;
+  submitIcon?: "arrow" | "return";
   isSubmitDisabled?: boolean;
   isSubmitLoading?: boolean;
-  images?: ImageAttachment[];
-  onPickImages?: () => void;
+  attachments: ComposerAttachment[];
+  cwd: string;
+  attachmentMenuItems: AttachmentMenuItem[];
+  onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
-  onRemoveImage?: (index: number) => void;
   client: DaemonClient | null;
   /** Dictation start gate from host runtime (socket connected + directory ready). */
   isReadyForDictation?: boolean;
@@ -76,9 +98,7 @@ export interface MessageInputProps {
   autoFocus?: boolean;
   autoFocusKey?: string;
   disabled?: boolean;
-  /** True when this input is the active composer. Used to gate global hotkeys and stop dictation when hidden. */
-  isInputActive?: boolean;
-  /** Newer alias for isInputActive passed by upstream call sites. */
+  /** True when this composer's pane is focused. Used to gate global hotkeys and stop dictation when hidden. */
   isPaneFocused?: boolean;
   /** Content to render on the left side of the button row (e.g., AgentStatusBar) */
   leftContent?: React.ReactNode;
@@ -103,6 +123,8 @@ export interface MessageInputProps {
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
   onHeightChange?: (height: number) => void;
+  /** Extra styles merged onto the input wrapper (e.g. elevated background). */
+  inputWrapperStyle?: import("react-native").ViewStyle;
 }
 
 export interface MessageInputRef {
@@ -116,8 +138,10 @@ export interface MessageInputRef {
   getNativeElement?: () => HTMLElement | null;
 }
 
-const MIN_INPUT_HEIGHT = 30;
+const MIN_INPUT_HEIGHT_MOBILE = 30;
+const MIN_INPUT_HEIGHT_DESKTOP = 46;
 const MAX_INPUT_HEIGHT = 160;
+const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
@@ -184,54 +208,29 @@ function getScrollableAncestorChain(element: HTMLElement | null): string[] {
   return results;
 }
 
-function ImageAttachmentThumbnail({ image }: { image: ImageAttachment }) {
-  const uri = useAttachmentPreviewUrl(image);
-  if (!uri) {
-    return <View style={styles.imageThumbnailPlaceholder} />;
-  }
-  return <Image source={{ uri }} style={styles.imageThumbnail} />;
-}
-
-function ComposerImagePreview({
-  image,
-  visible,
-  onClose,
-}: {
-  image: ImageAttachment | null;
-  visible: boolean;
-  onClose: () => void;
-}) {
-  const uri = useAttachmentPreviewUrl(image);
-
-  return (
-    <AttachmentImagePreviewModal
-      visible={visible}
-      imageUri={uri}
-      fileName={image?.fileName ?? null}
-      onClose={onClose}
-    />
-  );
-}
-
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(function MessageInput(
   {
     value,
     onChangeText,
     onSubmit,
+    hasExternalContent = false,
+    allowEmptySubmit = false,
+    submitButtonAccessibilityLabel,
+    submitIcon = "arrow",
     isSubmitDisabled = false,
     isSubmitLoading = false,
-    images = [],
-    onPickImages,
+    attachments,
+    cwd,
+    attachmentMenuItems,
+    onAttachButtonRef,
     onAddImages,
-    onRemoveImage,
     client,
     isReadyForDictation,
     placeholder = "Message...",
     autoFocus = false,
     autoFocusKey,
     disabled = false,
-    isInputActive = true,
-    isPaneFocused,
+    isPaneFocused = true,
     leftContent,
     beforeVoiceContent,
     rightContent,
@@ -245,10 +244,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onSelectionChange: onSelectionChangeCallback,
     onFocusChange,
     onHeightChange,
+    inputWrapperStyle,
   },
   ref,
 ) {
-  const isComposerActive = isPaneFocused ?? isInputActive;
   const { theme } = useUnistyles();
   const buttonIconSize = isWeb ? theme.iconSize.md : theme.iconSize.lg;
   const investigationComponentId = `MessageInput:${voiceServerId ?? "unknown-server"}:${voiceAgentId ?? "unknown-agent"}`;
@@ -258,9 +257,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const sendKeys = useShortcutKeys("message-input-send");
   const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
   const dictationToggleKeys = useShortcutKeys("dictation-toggle");
-  const queueKeys = useShortcutKeys("message-input-queue");
+  const focusInputKeys = useShortcutKeys("focus-message-input");
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
-  const [previewedImageIndex, setPreviewedImageIndex] = useState<number | null>(null);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const rootRef = useRef<View | null>(null);
   const inputWrapperRef = useRef<View | null>(null);
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -305,8 +304,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       if (action === "dictation-cancel") {
         if (isDictatingRef.current) {
           cancelDictation();
+          return true;
         }
-        return true;
+        return false;
       }
 
       if (action === "dictation-toggle") {
@@ -329,7 +329,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     },
   }));
   const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
-  const baselineInputHeightRef = useRef<number | null>(null);
   const overlayTransition = useSharedValue(0);
   const sendAfterTranscriptRef = useRef(false);
   const valueRef = useRef(value);
@@ -384,29 +383,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       sendAfterTranscriptRef.current = false;
 
       if (shouldAutoSend) {
-        const imageAttachments = images.length > 0 ? images : undefined;
         // Respect send behavior setting: when "queue", dictation queues too.
         if (defaultSendBehavior === "queue" && isAgentRunning && onQueue) {
-          onQueue({ text: nextValue, images: imageAttachments });
+          onQueue({ text: nextValue, attachments, cwd });
           onChangeText("");
         } else {
           onSubmit({
             text: nextValue,
-            images: imageAttachments,
+            attachments,
+            cwd,
             forceSend: isAgentRunning || undefined,
           });
         }
       } else {
         onChangeText(nextValue);
       }
-
-      if (isWeb && typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(() => {
-          measureWebInputHeight("dictation");
-        });
-      }
     },
-    [onChangeText, onSubmit, onQueue, images, isAgentRunning, defaultSendBehavior],
+    [onChangeText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
   );
 
   const handleDictationError = useCallback(
@@ -454,7 +447,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onError: handleDictationError,
     canStart: canStartDictation,
     canConfirm: canConfirmDictation,
-    autoStopWhenHidden: { isVisible: isComposerActive },
+    autoStopWhenHidden: { isVisible: isPaneFocused },
     enableDuration: true,
   });
 
@@ -485,11 +478,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       toast.error(dictationUnavailableMessage);
       return;
     }
+    if (!canStartDictation()) {
+      isDictatingRef.current = false;
+      return;
+    }
     // Keep hotkey toggling deterministic between the async start call and the
     // state-ref sync effect, so a rapid second toggle routes to confirm.
     isDictatingRef.current = true;
     await startDictation();
-  }, [dictationUnavailableMessage, startDictation, toast]);
+  }, [canStartDictation, dictationUnavailableMessage, startDictation, toast]);
 
   // Animate overlay
   useEffect(() => {
@@ -590,32 +587,43 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   const handleSendMessage = useCallback(() => {
     const trimmed = value.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && attachments.length === 0 && !hasExternalContent && !allowEmptySubmit) return;
     const payload = {
       text: trimmed,
-      images: images.length > 0 ? images : undefined,
+      attachments,
+      cwd,
       forceSend: isAgentRunning || undefined,
     };
     onSubmit(payload);
     inputHeightRef.current = MIN_INPUT_HEIGHT;
     setInputHeight(MIN_INPUT_HEIGHT);
     onHeightChange?.(MIN_INPUT_HEIGHT);
-  }, [value, images, onSubmit, isAgentRunning, onHeightChange]);
+  }, [
+    allowEmptySubmit,
+    value,
+    attachments,
+    cwd,
+    onSubmit,
+    isAgentRunning,
+    onHeightChange,
+    hasExternalContent,
+  ]);
 
   const handleQueueMessage = useCallback(() => {
     if (!onQueue) return;
     const trimmed = value.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && attachments.length === 0) return;
     const payload = {
       text: trimmed,
-      images: images.length > 0 ? images : undefined,
+      attachments,
+      cwd,
     };
     onQueue(payload);
     onChangeText("");
     inputHeightRef.current = MIN_INPUT_HEIGHT;
     setInputHeight(MIN_INPUT_HEIGHT);
     onHeightChange?.(MIN_INPUT_HEIGHT);
-  }, [value, images, onQueue, onChangeText, onHeightChange]);
+  }, [value, attachments, cwd, onQueue, onChangeText, onHeightChange]);
 
   // Default send action: respects the sendBehavior setting.
   // When "interrupt" (default), primary action sends immediately (interrupts).
@@ -820,76 +828,27 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     };
   }, [getWebTextArea]);
 
-  function measureWebInputHeight(source: string): boolean {
-    if (!isWeb) return false;
-    const textarea = getWebTextArea();
-    if (!textarea || typeof textarea.scrollHeight !== "number") return false;
-    const scrollHeight = textarea.scrollHeight ?? 0;
-
-    if (baselineInputHeightRef.current === null && scrollHeight > 0) {
-      baselineInputHeightRef.current = scrollHeight;
-      logWebStickyBottom("composer_baseline_measured", {
-        source,
-        baseline: scrollHeight,
-      });
-    }
-
-    const baseline = baselineInputHeightRef.current ?? MIN_INPUT_HEIGHT;
-    const rawTarget = scrollHeight > 0 ? scrollHeight : baseline;
-    const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, rawTarget));
-
-    const previousHeight = inputHeightRef.current;
-    if (Math.abs(previousHeight - bounded) >= 1) {
-      inputHeightRef.current = bounded;
-      setInputHeight(bounded);
-      onHeightChange?.(bounded);
-      logWebStickyBottom("composer_height_changed", {
-        source,
-        previousHeight,
-        nextHeight: bounded,
-        scrollHeight,
-        clientHeight: textarea.clientHeight ?? null,
-        offsetHeight: textarea.offsetHeight ?? null,
-        baseline,
-        rawTarget,
-      });
-      return true;
-    }
-    return false;
-  }
-
   function setBoundedInputHeight(nextHeight: number) {
     const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, nextHeight));
     if (Math.abs(inputHeightRef.current - bounded) < 1) return;
-    const previousHeight = inputHeightRef.current;
     inputHeightRef.current = bounded;
     setInputHeight(bounded);
     onHeightChange?.(bounded);
-    logWebStickyBottom("composer_height_changed_native", {
-      previousHeight,
-      nextHeight: bounded,
-    });
   }
+
+  useComposerHeightMirror({
+    value,
+    textareaRef: webTextareaRef,
+    minHeight: MIN_INPUT_HEIGHT,
+    maxHeight: MAX_INPUT_HEIGHT,
+    onHeight: setBoundedInputHeight,
+  });
 
   function handleContentSizeChange(
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
-    const contentHeight = event.nativeEvent.contentSize.height;
-    if (isWeb) {
-      logWebStickyBottom("composer_content_size_change", {
-        reportedHeight: contentHeight,
-      });
-      if (baselineInputHeightRef.current === null && contentHeight > 0) {
-        baselineInputHeightRef.current = contentHeight;
-        logWebStickyBottom("composer_baseline_measured", {
-          source: "contentSizeChange",
-          baseline: contentHeight,
-        });
-      }
-      setBoundedInputHeight(contentHeight);
-      return;
-    }
-    setBoundedInputHeight(contentHeight);
+    if (isWeb) return;
+    setBoundedInputHeight(event.nativeEvent.contentSize.height);
   }
 
   function handleSelectionChange(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
@@ -918,7 +877,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     // IME composition in progress (e.g. CJK input) — all key events belong to the
     // IME, not the app. keyCode 229 is a Chromium fallback for when isComposing is
     // cleared before the keydown fires.
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
 
     // Allow parent to intercept key events (e.g., for autocomplete navigation)
     if (onKeyPressCallback) {
@@ -950,22 +909,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     handleDefaultSendAction();
   }
 
-  const hasImages = images.length > 0;
-  const previewedImage =
-    previewedImageIndex !== null ? (images[previewedImageIndex] ?? null) : null;
-  const hasSendableContent = value.trim().length > 0 || hasImages;
-  const shouldShowSendButton = hasSendableContent || isSubmitLoading;
+  const hasAttachments = attachments.length > 0;
+  const hasRealContent = value.trim().length > 0 || hasAttachments;
+  const hasSendableContent = hasRealContent || hasExternalContent;
+  const shouldShowSendButton = hasSendableContent || allowEmptySubmit || isSubmitLoading;
   const canPressLoadingButton = isSubmitLoading && typeof onSubmitLoadingPress === "function";
   const isSendButtonDisabled =
     disabled || (!canPressLoadingButton && (isSubmitDisabled || isSubmitLoading));
   const defaultActionQueues = defaultSendBehavior === "queue" && isAgentRunning;
-  const submitAccessibilityLabel = canPressLoadingButton
+  const defaultSubmitAccessibilityLabel = canPressLoadingButton
     ? "Interrupt agent"
     : defaultActionQueues
       ? "Queue message"
       : isAgentRunning
         ? "Send and interrupt"
         : "Send message";
+  const submitAccessibilityLabel =
+    submitButtonAccessibilityLabel ?? defaultSubmitAccessibilityLabel;
 
   const handleInputChange = useCallback(
     (nextValue: string) => {
@@ -983,52 +943,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   return (
     <View ref={rootRef} style={styles.container} testID="message-input-root">
-      <ComposerImagePreview
-        image={previewedImage}
-        visible={previewedImage !== null}
-        onClose={() => setPreviewedImageIndex(null)}
-      />
       {/* Regular input */}
-      <Animated.View ref={inputWrapperRef} style={[styles.inputWrapper, inputAnimatedStyle]}>
-        {/* Image preview pills */}
-        {hasImages && (
-          <View style={styles.imagePreviewContainer} testID="message-input-image-preview">
-            {images.map((image, index) => (
-              <Pressable
-                key={`${image.id}-${index}`}
-                testID="message-input-image-pill"
-                style={styles.imagePill}
-                accessibilityLabel={`Preview image ${image.fileName ?? index + 1}`}
-                onPress={() => setPreviewedImageIndex(index)}
-              >
-                {({ hovered }) => (
-                  <>
-                    <View style={styles.imageThumbnailWrapper}>
-                      <ImageAttachmentThumbnail image={image} />
-                    </View>
-                    {onRemoveImage && (
-                      <Pressable
-                        accessibilityLabel={`Remove image ${image.fileName ?? index + 1}`}
-                        hitSlop={8}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          onRemoveImage(index);
-                        }}
-                        style={[
-                          styles.removeImageButton,
-                          (hovered || !isWeb) && styles.removeImageButtonVisible,
-                        ]}
-                      >
-                        <X size={12} color="white" />
-                      </Pressable>
-                    )}
-                  </>
-                )}
-              </Pressable>
-            ))}
-          </View>
-        )}
-
+      <Animated.View
+        ref={inputWrapperRef}
+        style={[styles.inputWrapper, inputWrapperStyle, inputAnimatedStyle]}
+      >
         {/* Text input */}
         <View style={styles.textInputScrollWrapper}>
           <TextInput
@@ -1040,10 +959,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             accessibilityLabel="Message agent..."
             onFocus={() => {
               isInputFocusedRef.current = true;
+              setIsInputFocused(true);
               onFocusChange?.(true);
             }}
             onBlur={() => {
               isInputFocusedRef.current = false;
+              setIsInputFocused(false);
               onFocusChange?.(false);
             }}
             style={[
@@ -1068,34 +989,69 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             autoFocus={isWeb && autoFocus}
           />
           {inputScrollbar}
+          {isWeb && isPaneFocused && !isInputFocused && !value && focusInputKeys ? (
+            <Text style={styles.focusHintText} pointerEvents="none">
+              {formatShortcut(focusInputKeys[0], getShortcutOs())} to focus
+            </Text>
+          ) : null}
         </View>
 
         {/* Button row */}
         <View style={styles.buttonRow}>
           {/* Left: attachment button + leftContent slot */}
           <View style={styles.leftButtonGroup}>
-            {onPickImages && (
+            <DropdownMenu>
               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild>
-                  <Pressable
-                    onPress={onPickImages}
+                  <DropdownMenuTrigger
                     disabled={!isConnected || disabled}
-                    accessibilityLabel="Attach images"
+                    accessibilityLabel="Add attachment"
                     accessibilityRole="button"
+                    testID="message-input-attach-button"
                     style={({ hovered }) => [
                       styles.attachButton,
                       hovered && styles.iconButtonHovered,
                       (!isConnected || disabled) && styles.buttonDisabled,
                     ]}
                   >
-                    <Paperclip size={buttonIconSize} color={theme.colors.foreground} />
-                  </Pressable>
+                    {({ hovered }) => (
+                      <View
+                        ref={onAttachButtonRef}
+                        collapsable={false}
+                        style={styles.attachButtonAnchor}
+                      >
+                        <Plus
+                          size={buttonIconSize}
+                          color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                        />
+                      </View>
+                    )}
+                  </DropdownMenuTrigger>
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" offset={8}>
-                  <Text style={styles.tooltipText}>Attach images</Text>
+                  <Text style={styles.tooltipText}>Add attachment</Text>
                 </TooltipContent>
               </Tooltip>
-            )}
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                offset={8}
+                minWidth={220}
+                testID="message-input-attachment-menu"
+              >
+                {attachmentMenuItems.map((item) => (
+                  <DropdownMenuItem
+                    key={item.id}
+                    testID={`message-input-attachment-menu-item-${item.id}`}
+                    disabled={item.disabled}
+                    onSelect={item.onSelect}
+                    leading={item.icon ?? null}
+                  >
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             {leftContent}
           </View>
 
@@ -1123,13 +1079,21 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                   isDictating && styles.voiceButtonRecording,
                 ]}
               >
-                {isDictating ? (
-                  <Square size={buttonIconSize} color="white" fill="white" />
-                ) : isRealtimeVoiceForCurrentAgent && voice?.isMuted ? (
-                  <MicOff size={buttonIconSize} color={theme.colors.foreground} />
-                ) : (
-                  <Mic size={buttonIconSize} color={theme.colors.foreground} />
-                )}
+                {({ hovered }) =>
+                  isDictating ? (
+                    <Square size={buttonIconSize} color="white" fill="white" />
+                  ) : isRealtimeVoiceForCurrentAgent && voice?.isMuted ? (
+                    <MicOff
+                      size={buttonIconSize}
+                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                    />
+                  ) : (
+                    <Mic
+                      size={buttonIconSize}
+                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                    />
+                  )
+                }
               </TooltipTrigger>
               <TooltipContent side="top" align="center" offset={8}>
                 <View style={styles.tooltipRow}>
@@ -1154,31 +1118,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
               </TooltipContent>
             </Tooltip>
             {rightContent}
-            {hasSendableContent && isAgentRunning && onQueue && !defaultActionQueues && (
-              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                <TooltipTrigger
-                  onPress={handleAlternateSendAction}
-                  disabled={!isConnected || disabled}
-                  accessibilityLabel="Queue message"
-                  accessibilityRole="button"
-                  style={({ hovered }) => [
-                    styles.queueButton,
-                    hovered && styles.iconButtonHovered,
-                    (!isConnected || disabled) && styles.buttonDisabled,
-                  ]}
-                >
-                  <Plus size={buttonIconSize} color="white" />
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" offset={8}>
-                  <View style={styles.tooltipRow}>
-                    <Text style={styles.tooltipText}>Queue</Text>
-                    {queueKeys ? (
-                      <Shortcut chord={queueKeys} style={styles.tooltipShortcut} />
-                    ) : null}
-                  </View>
-                </TooltipContent>
-              </Tooltip>
-            )}
             {shouldShowSendButton && (
               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger
@@ -1190,13 +1129,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                 >
                   {isSubmitLoading ? (
                     <ActivityIndicator size="small" color="white" />
+                  ) : submitIcon === "return" ? (
+                    <CornerDownLeft size={buttonIconSize} color="white" />
                   ) : (
                     <ArrowUp size={buttonIconSize} color="white" />
                   )}
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" offset={8}>
                   <View style={styles.tooltipRow}>
-                    <Text style={styles.tooltipText}>{defaultActionQueues ? "Queue" : "Send"}</Text>
+                    <Text style={styles.tooltipText}>
+                      {submitButtonAccessibilityLabel ?? (defaultActionQueues ? "Queue" : "Send")}
+                    </Text>
                     {sendKeys ? <Shortcut chord={sendKeys} style={styles.tooltipShortcut} /> : null}
                   </View>
                 </TooltipContent>
@@ -1264,67 +1207,16 @@ const styles = StyleSheet.create(((theme: any) => ({
         }
       : {}),
   },
-  imagePreviewContainer: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    flexWrap: "wrap",
-  },
-  imagePill: {
-    position: "relative",
-    ...(isWeb
-      ? {
-          cursor: "pointer",
-        }
-      : {}),
-  },
-  imageThumbnailWrapper: {
-    width: 48,
-    height: 48,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.borderAccent,
-    overflow: "hidden",
-  },
-  imageThumbnail: {
-    width: 48,
-    height: 48,
-  },
-  imageThumbnailPlaceholder: {
-    width: 48,
-    height: 48,
-    backgroundColor: theme.colors.surface2,
-  },
-  removeImageButton: {
-    position: "absolute",
-    top: -7,
-    right: -7,
-    width: 18,
-    height: 18,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.15)",
-    opacity: isWeb ? 0 : 1,
-    ...(isWeb
-      ? {
-          transitionProperty: "opacity, transform",
-          transitionDuration: "150ms",
-          transform: [{ scale: 0.85 }],
-        }
-      : {}),
-  },
-  removeImageButtonVisible: {
-    opacity: 1,
-    ...(isWeb
-      ? {
-          transform: [{ scale: 1 }],
-        }
-      : {}),
-  },
   textInputScrollWrapper: {
     position: "relative",
+  },
+  focusHintText: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    opacity: 0.5,
   },
   textInput: {
     width: "100%",
@@ -1344,6 +1236,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
+    marginHorizontal: -6,
   },
   leftButtonGroup: {
     minWidth: 0,
@@ -1351,18 +1244,24 @@ const styles = StyleSheet.create(((theme: any) => ({
     flexGrow: 1,
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: theme.spacing[1],
+    gap: theme.spacing[0],
   },
   rightButtonGroup: {
     flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
-    gap: isWeb ? theme.spacing[2] : theme.spacing[1],
+    gap: theme.spacing[1],
   },
   attachButton: {
     width: 28,
     height: 28,
     borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attachButtonAnchor: {
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1376,14 +1275,6 @@ const styles = StyleSheet.create(((theme: any) => ({
   voiceButtonRecording: {
     backgroundColor: theme.colors.destructive,
   },
-  queueButton: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   sendButton: {
     width: 28,
     height: 28,
@@ -1391,6 +1282,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     backgroundColor: theme.colors.accent,
     alignItems: "center",
     justifyContent: "center",
+    marginLeft: theme.spacing[1],
   },
   iconButtonHovered: {
     backgroundColor: theme.colors.surface2,

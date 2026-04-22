@@ -452,6 +452,7 @@ interface AssistantMessageProps {
   serverId?: string;
   client?: DaemonClient | null;
   disableOuterSpacing?: boolean;
+  spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -1001,9 +1002,12 @@ export const AssistantMessage = memo(function AssistantMessage({
   serverId,
   client,
   disableOuterSpacing,
+  spacing = "default",
 }: AssistantMessageProps) {
   const { theme, rt } = useUnistyles();
-  const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
+  const resolvedDisableOuterSpacing = useDisableOuterSpacing(
+    disableOuterSpacing ?? spacing !== "default",
+  );
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [rt.themeName]);
 

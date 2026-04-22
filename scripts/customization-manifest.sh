@@ -15,7 +15,6 @@ CUSTOM_FILES=(
   "CUSTOM_DESKTOP_WORKFLOW.md"
   "CUSTOM_CHANGELOG.md"
   "packages/app/src/components/attachment-image-preview-modal.tsx"
-  "packages/app/src/components/message-input.tsx"
   "packages/app/src/components/message.tsx"
   "packages/app/src/lib/overlay-root.ts"
   "scripts/customization-manifest.sh"

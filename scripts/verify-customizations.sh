@@ -35,8 +35,6 @@ for file in "${CUSTOM_FILES[@]}"; do
   fi
 done
 
-check_contains "packages/app/src/components/message-input.tsx" "AttachmentImagePreviewModal" "composer imports lightbox modal"
-check_contains "packages/app/src/components/message-input.tsx" "previewedImageIndex" "composer tracks preview image state"
 check_contains "packages/app/src/components/message.tsx" "AttachmentImagePreviewModal" "message renderer imports lightbox modal"
 check_contains "packages/app/src/components/message.tsx" "setPreviewedImageIndex" "message renderer opens image preview"
 check_contains "packages/app/src/components/attachment-image-preview-modal.tsx" "getOverlayRoot" "lightbox renders via overlay root"
