@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.1.61-beta.1 - 2026-04-22
+
+### Added
+- `additionalModels` option in provider config lets you add or relabel models without replacing the full list — entries merge with runtime-discovered models (ACP) or your static `models` list. See the [Providers docs](https://paseo.sh/docs/providers).
+- New [Providers docs page](https://paseo.sh/docs/providers) covering first-class providers and every custom provider config pattern in one place.
+
+### Improved
+- Pi loads your installed extensions on startup so their models show up in the model picker.
+- Resizing the explorer sidebar no longer rerenders the rest of the workspace.
+- Images in assistant messages (both file paths and inline data URLs) persist as local attachments and open in the file pane.
+
+## 0.1.60 - 2026-04-22
+
+### Added
+- Scripts and services per worktree — define named commands in `paseo.json`, and long-running services get supervised with their own ports and nice proxy URLs like `http://web.my-app.localhost:6767`. See the [worktrees guide](https://paseo.sh/docs/worktrees).
+- Launch scripts and services for a worktree directly from the workspace header.
+- New Setup tab in every workspace showing setup, teardown, and script progress live.
+- GitHub checks and PR reviews in the explorer sidebar, with a hover card for the full breakdown.
+- New worktree creation flow lets you pick a base branch or check out an existing GitHub pull request.
+- Attach GitHub issues and pull requests to an agent as part of its prompt context.
+- Pull request pane in the workspace sidebar.
+- Redesigned Settings screen with modular section navigation.
+- Per-host provider configuration — set providers, models, and credentials independently on each remote host.
+- Direct Pi integration replaces the ACP bridge, with faster streaming and fewer hiccups.
+- Beta release channel — opt in from Settings to receive beta desktop builds before they are promoted to stable.
+- New-workspace picker ranks branches by recency with fast search.
+
+### Improved
+- Workspace and tab switching are dramatically faster on desktop and mobile — you can keep many workspaces open in parallel without lag.
+- Agent streams render more smoothly during heavy tool output.
+- App startup routes through a stable connection and lands on the right screen without flicker.
+- Provider refresh is reliable and no longer stalls on transient failures.
+- Git and GitHub state stay in sync with local changes like commits, branch switches, and pushes.
+- Composer attachments redesigned with a cleaner pill layout and an image lightbox.
+- In-app notifications route to whichever surface you're actually looking at.
+- Keyboard shortcuts keep working while Settings is open.
+- Escape reliably interrupts the active agent.
+- Checking out a pull request from a fork lands on an owner-prefixed branch so multiple forks don't collide.
+- `paseo ls` defaults to active agents; pass `-a` to include archived.
+- GitHub branch and PR picker loads faster — queries are deferred until the picker opens.
+
+### Fixed
+- Composer textarea shrinks back down after sending on web.
+- New workspace drafts clear after submit instead of sticking around.
+- Replacing a running agent cleans up the previous one without leaving it behind.
+- Agent notifications no longer get swallowed by a backgrounded focused client.
+- Removed workspace folders disappear from the workspace list again.
+- Codex keeps fast mode after you approve a plan. ([#526](https://github.com/getpaseo/paseo/pull/526) by [@therainisme](https://github.com/therainisme))
+- Workspace tab focus is preserved across page refreshes.
+- Settings screen no longer pushes its header down with extra spacing.
+- Branch switcher title no longer overflows on narrow rows.
+- iOS image picker no longer leaves the screen unresponsive after cancelling.
+- Archiving a worktree recovers cleanly if a previous attempt was interrupted.
+- Images in agent messages with `~`-prefixed paths load instead of spinning forever.
+- Tool call blocks expand correctly on mobile while an agent is still streaming.
+- Timeline no longer stutters when catch-up and projected ranges overlap.
+- Codex no longer flashes idle when a replacement turn is in progress.
+- Branch state recovers correctly when a rebase is in progress.
+- Workspace hover card no longer clips near screen edges.
+
 ## 0.1.59 - 2026-04-16
 
 ### Added

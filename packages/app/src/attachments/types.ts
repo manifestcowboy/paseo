@@ -1,3 +1,5 @@
+import type { GitHubSearchItem } from "@server/shared/messages";
+
 export type AttachmentStorageType = "web-indexeddb" | "desktop-file" | "native-file";
 
 export interface AttachmentMetadata {
@@ -15,7 +17,13 @@ export interface AttachmentMetadata {
   createdAt: number;
 }
 
+export type ComposerAttachment =
+  | { kind: "image"; metadata: AttachmentMetadata }
+  | { kind: "github_issue"; item: GitHubSearchItem }
+  | { kind: "github_pr"; item: GitHubSearchItem };
+
 export type AttachmentDataSource =
+  | { kind: "base64"; base64: string }
   | { kind: "blob"; blob: Blob }
   | { kind: "data_url"; dataUrl: string }
   | { kind: "file_uri"; uri: string };
