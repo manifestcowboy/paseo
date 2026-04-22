@@ -16,7 +16,7 @@ extraResources:
     to: skills
 publish:
   provider: github
-  owner: getpaseo
+  owner: manifestcowboy
   repo: paseo
 mac:
   artifactName: "Paseo-${version}-${arch}.${ext}"

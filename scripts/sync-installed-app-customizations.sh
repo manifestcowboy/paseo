@@ -7,6 +7,33 @@ cd "$REPO_ROOT"
 APP_PATH="/Applications/Paseo.app"
 BUILD_WEB=1
 OPEN_AFTER_SYNC=0
+MAC_CODESIGN_IDENTITY="${PASEO_MAC_CODESIGN_IDENTITY:-}"
+ALLOW_MAC_APP_PATCH="${PASEO_ALLOW_MAC_APP_PATCH:-0}"
+
+find_codesign_identity() {
+  if [[ -n "$MAC_CODESIGN_IDENTITY" ]]; then
+    printf '%s\n' "$MAC_CODESIGN_IDENTITY"
+    return 0
+  fi
+
+  local identity
+  identity="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Apple Development:.*\)"/\1/p' \
+      | head -n 1
+  )"
+
+  if [[ -n "$identity" ]]; then
+    printf '%s\n' "$identity"
+    return 0
+  fi
+
+  return 1
+}
+
+verify_mac_app_signature() {
+  codesign --verify --deep --strict --verbose=2 "$APP_PATH" >/dev/null
+}
 
 usage() {
   cat <<'EOF'
@@ -21,8 +48,10 @@ Options:
 What it does:
   1) Builds the current web bundle from this repo (unless --no-build-web)
   2) Stops the installed Paseo app if it is running
-  3) Syncs packages/app/dist into Paseo.app/Contents/Resources/app-dist
-  4) Relaunches the installed app if it was running before, or if --open is passed
+  3) On macOS, verifies there is a usable local signing identity before patching
+  4) Syncs packages/app/dist into Paseo.app/Contents/Resources/app-dist
+  5) On macOS, re-signs the modified app bundle and verifies it
+  6) Relaunches the installed app if it was running before, or if --open is passed
 EOF
 }
 
@@ -61,6 +90,28 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 0
 fi
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if [[ "$ALLOW_MAC_APP_PATCH" != "1" ]]; then
+    echo "[error] Refusing to patch $APP_PATH in place on macOS by default." >&2
+    echo "        Modifying files inside a signed app bundle can leave Gatekeeper rejecting the app." >&2
+    echo "        Use a fresh signed app install instead." >&2
+    echo "        If you intentionally want to patch and re-sign locally, re-run with:" >&2
+    echo "        PASEO_ALLOW_MAC_APP_PATCH=1 PASEO_MAC_CODESIGN_IDENTITY=\"Apple Development: Your Name (TEAMID)\" npm run sync:installed:app" >&2
+    exit 1
+  fi
+
+  if ! CODESIGN_IDENTITY="$(find_codesign_identity)"; then
+    echo "[error] Refusing to patch $APP_PATH on macOS without a local signing identity." >&2
+    echo "        Set PASEO_MAC_CODESIGN_IDENTITY or install an Apple Development identity first." >&2
+    exit 1
+  fi
+
+  if ! verify_mac_app_signature; then
+    echo "[warn] Existing app signature is already invalid before sync." >&2
+    echo "       The script will continue and re-sign the bundle afterward." >&2
+  fi
+fi
+
 if [[ "$BUILD_WEB" -eq 1 ]]; then
   echo "[info] Building current web bundle..."
   npm run build:web --workspace=@getpaseo/app
@@ -89,6 +140,14 @@ rsync -a --delete "$SOURCE_APP_DIST/" "$TARGET_APP_DIST/"
 if ! cmp -s "$SOURCE_APP_DIST/index.html" "$TARGET_APP_DIST/index.html"; then
   echo "[error] Installed app index.html does not match the local build after sync." >&2
   exit 1
+fi
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  echo "[info] Re-signing patched macOS app with: $CODESIGN_IDENTITY"
+  codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP_PATH"
+
+  echo "[info] Verifying updated app signature..."
+  verify_mac_app_signature
 fi
 
 echo "[ok] Installed app now uses the current customized app-dist."

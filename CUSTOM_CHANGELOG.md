@@ -33,5 +33,11 @@ This file is intentionally separate from upstream `CHANGELOG.md`.
   - `npm run verify:customizations`
   - `npm run build --workspace=@getpaseo/server`
   - `npm run typecheck`
+
+## 2026-04-23 - Removed Fork Message Image Preview Overlay
+
+- Reverted `packages/app/src/components/message.tsx` back to upstream behavior so message image previews now match upstream exactly.
+- Removed the fork-only `packages/app/src/components/attachment-image-preview-modal.tsx` overlay.
+- Kept `packages/app/src/lib/overlay-root.ts` because it is still used by other overlay components.
   - `npm run build:web --workspace=@getpaseo/app`
   - `./scripts/sync-installed-app-customizations.sh --no-build-web`

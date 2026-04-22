@@ -53,7 +53,6 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import { theme } from "@/styles/theme";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -72,19 +71,24 @@ import {
 } from "@/utils/inline-path";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { markScrollInvestigationEvent } from "@/utils/scroll-jank-investigation";
+import { markScrollInvestigationEvent } from "@/utils/scroll-jank";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import {
   getAssistantImageMetadata,
   setAssistantImageMetadata,
 } from "@/utils/assistant-image-metadata";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
+import {
+  createPreviewAttachmentId,
+  getFileNameFromPath,
+  parseImageDataUrl,
+} from "@/attachments/utils";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { AttachmentImagePreviewModal } from "@/components/attachment-image-preview-modal";
+import { persistAttachmentFromBase64, persistAttachmentFromDataUrl } from "@/attachments/service";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 
@@ -120,6 +124,26 @@ function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
+const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
+  "data:image/png;base64",
+  "data:image/gif;base64",
+  "data:image/jpeg;base64",
+  "https://",
+  "http://",
+] as const;
+const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
+
+type MarkdownWithStableRendererProps = {
+  children: ReactNode;
+  style: ReturnType<typeof createMarkdownStyles>;
+  rules: RenderRules;
+  markdownit: MarkdownIt;
+  onLinkPress: (url: string) => boolean;
+  allowedImageHandlers: readonly string[];
+  topLevelMaxExceededItem: ReactNode;
+};
+
+const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
   @keyframes ${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} {
     0% {
@@ -265,6 +289,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   content: {
     alignItems: "flex-end",
     maxWidth: "100%",
+    cursor: "auto",
   },
   containerSpacing: {
     marginBottom: theme.spacing[1],
@@ -303,11 +328,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
-    ...(isWeb
-      ? {
-          cursor: "pointer",
-        }
-      : {}),
   },
   imageThumbnail: {
     width: 48,
@@ -339,27 +359,6 @@ function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAtta
   return <Image source={{ uri }} style={userMessageStylesheet.imageThumbnail} />;
 }
 
-function UserMessageImagePreview({
-  image,
-  visible,
-  onClose,
-}: {
-  image: UserMessageImageAttachment | null;
-  visible: boolean;
-  onClose: () => void;
-}) {
-  const uri = useAttachmentPreviewUrl(image);
-
-  return (
-    <AttachmentImagePreviewModal
-      visible={visible}
-      imageUri={uri}
-      fileName={image?.fileName ?? null}
-      onClose={onClose}
-    />
-  );
-}
-
 export const UserMessage = memo(function UserMessage({
   message,
   images = [],
@@ -368,16 +367,14 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   disableOuterSpacing,
 }: UserMessageProps) {
+  const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const [messageHovered, setMessageHovered] = useState(false);
   const [copyButtonHovered, setCopyButtonHovered] = useState(false);
-  const [previewedImageIndex, setPreviewedImageIndex] = useState<number | null>(null);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
-  const previewedImage =
-    previewedImageIndex !== null ? (images[previewedImageIndex] ?? null) : null;
 
   return (
     <View
@@ -395,11 +392,6 @@ export const UserMessage = memo(function UserMessage({
         onHoverIn={() => setMessageHovered(true)}
         onHoverOut={() => setMessageHovered(false)}
       >
-        <UserMessageImagePreview
-          image={previewedImage}
-          visible={previewedImage !== null}
-          onClose={() => setPreviewedImageIndex(null)}
-        />
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View
@@ -409,14 +401,9 @@ export const UserMessage = memo(function UserMessage({
               ]}
             >
               {images.map((image, index) => (
-                <Pressable
-                  key={`${image.id}-${index}`}
-                  accessibilityLabel={`Preview image ${image.fileName ?? index + 1}`}
-                  onPress={() => setPreviewedImageIndex(index)}
-                  style={userMessageStylesheet.imagePill}
-                >
+                <View key={`${image.id}-${index}`} style={userMessageStylesheet.imagePill}>
                   <UserMessageAttachmentThumbnail image={image} />
-                </Pressable>
+                </View>
               ))}
             </View>
           ) : null}
@@ -459,6 +446,12 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[3],
+  },
+  containerCompactTop: {
+    paddingTop: 0,
+  },
+  containerCompactBottom: {
+    paddingBottom: 0,
   },
   containerSpacing: {
     marginBottom: theme.spacing[4],
@@ -608,6 +601,7 @@ function AssistantMarkdownImage({
     () => resolveAssistantImageSource({ source, workspaceRoot }),
     [source, workspaceRoot],
   );
+  const dataImage = useMemo(() => parseImageDataUrl(source), [source]);
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? theme.spacing[4] : 0,
@@ -634,16 +628,49 @@ function AssistantMarkdownImage({
       if (payload.error) {
         throw new Error(payload.error);
       }
-      if (!payload.file || payload.file.kind !== "image" || !payload.file.content) {
+      const file = payload.file;
+      if (!file || file.kind !== "image" || !file.content) {
         throw new Error("Image preview unavailable.");
       }
 
-      return `data:${payload.file.mimeType ?? "image/png"};base64,${payload.file.content}`;
+      return await persistAttachmentFromBase64({
+        id: createPreviewAttachmentId({
+          mimeType: file.mimeType ?? "image/png",
+          path: file.path || resolution.path,
+          size: file.size,
+          modifiedAt: file.modifiedAt,
+          contentLength: file.content.length,
+        }),
+        base64: file.content,
+        mimeType: file.mimeType,
+        fileName: getFileNameFromPath(file.path || resolution.path),
+      });
+    },
+  });
+  const dataImageQuery = useQuery({
+    queryKey: ["assistantMarkdownDataImage", dataImage?.cacheKey ?? null],
+    enabled: dataImage !== null,
+    staleTime: 30_000,
+    queryFn: async () => {
+      if (!dataImage) {
+        return null;
+      }
+
+      return await persistAttachmentFromDataUrl({
+        id: createPreviewAttachmentId({
+          mimeType: dataImage.mimeType,
+          contentLength: dataImage.base64.length,
+        }),
+        dataUrl: source,
+        mimeType: dataImage.mimeType,
+      });
     },
   });
 
-  const directUri = resolution?.kind === "direct" ? resolution.uri : null;
-  const resolvedUri = directUri ?? query.data ?? null;
+  const fileAssetUri = useAttachmentPreviewUrl(query.data);
+  const dataImageAssetUri = useAttachmentPreviewUrl(dataImageQuery.data);
+  const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
+  const resolvedUri = directUri ?? dataImageAssetUri ?? fileAssetUri ?? null;
 
   if (resolvedUri) {
     return (
@@ -658,7 +685,7 @@ function AssistantMarkdownImage({
     );
   }
 
-  if (query.isLoading) {
+  if (query.isLoading || dataImageQuery.isLoading) {
     return (
       <View
         style={[
@@ -681,7 +708,11 @@ function AssistantMarkdownImage({
       ]}
     >
       <Text style={assistantMessageStylesheet.imageErrorText}>
-        {query.error instanceof Error ? query.error.message : "Unable to load image preview."}
+        {query.error instanceof Error
+          ? query.error.message
+          : dataImageQuery.error instanceof Error
+            ? dataImageQuery.error.message
+            : "Unable to load image preview."}
       </Text>
     </View>
   );
@@ -972,6 +1003,116 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
+interface NativeExpandableBadgeShimmerProps {
+  label: string;
+  secondaryLabel?: string;
+  rowWidth: number;
+  rowHeight: number;
+  peakWidth: number;
+  durationSeconds: number;
+  gradientId: string;
+}
+
+const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer({
+  label,
+  secondaryLabel,
+  rowWidth,
+  rowHeight,
+  peakWidth,
+  durationSeconds,
+  gradientId,
+}: NativeExpandableBadgeShimmerProps) {
+  const shimmerTranslateX = useSharedValue(0);
+
+  useEffect(() => {
+    const startPosition = -peakWidth;
+    const endPosition = rowWidth + peakWidth;
+    shimmerTranslateX.value = startPosition;
+    shimmerTranslateX.value = withRepeat(
+      withTiming(endPosition, {
+        duration: durationSeconds * 1000,
+        easing: Easing.linear,
+      }),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(shimmerTranslateX);
+    };
+  }, [durationSeconds, peakWidth, rowWidth, shimmerTranslateX]);
+
+  const nativeShimmerPeakStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: shimmerTranslateX.value }],
+  }));
+
+  const nativeShimmerTrackStyle = useMemo(
+    () => [expandableBadgeStylesheet.nativeShimmerTrack, { width: rowWidth, height: rowHeight }],
+    [rowHeight, rowWidth],
+  );
+
+  const nativeShimmerMaskStyle = useMemo(
+    () => [expandableBadgeStylesheet.shimmerMaskRow, { width: rowWidth, height: rowHeight }],
+    [rowHeight, rowWidth],
+  );
+
+  const nativeLabelMaskStyle = useMemo(
+    () => [expandableBadgeStylesheet.label, { color: "#000000", opacity: 1 }],
+    [],
+  );
+
+  const nativeSecondaryMaskStyle = useMemo(
+    () => [expandableBadgeStylesheet.secondaryLabel, { color: "#000000", opacity: 1 }],
+    [],
+  );
+
+  const nativeShimmerPeakCombinedStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.nativeShimmerPeak,
+      nativeShimmerPeakStyle,
+      { width: peakWidth, height: rowHeight },
+    ],
+    [nativeShimmerPeakStyle, peakWidth, rowHeight],
+  );
+
+  return (
+    <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
+      <MaskedView
+        pointerEvents="none"
+        style={nativeShimmerTrackStyle}
+        maskElement={
+          <View pointerEvents="none" style={nativeShimmerMaskStyle}>
+            <Text style={nativeLabelMaskStyle} numberOfLines={1}>
+              {label}
+            </Text>
+            {secondaryLabel ? (
+              <Text style={nativeSecondaryMaskStyle} numberOfLines={1}>
+                {secondaryLabel}
+              </Text>
+            ) : (
+              <View style={expandableBadgeStylesheet.spacer} />
+            )}
+          </View>
+        }
+      >
+        <View pointerEvents="none" style={nativeShimmerTrackStyle}>
+          <Animated.View pointerEvents="none" style={nativeShimmerPeakCombinedStyle}>
+            <Svg width="100%" height="100%" preserveAspectRatio="none">
+              <Defs>
+                <SvgLinearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+                  <Stop offset="0%" stopColor="#ffffff" stopOpacity={0} />
+                  <Stop offset="50%" stopColor="#ffffff" stopOpacity={1} />
+                  <Stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
+            </Svg>
+          </Animated.View>
+        </View>
+      </MaskedView>
+    </View>
+  );
+});
+
 interface MemoizedMarkdownBlockProps {
   text: string;
   styles: ReturnType<typeof createMarkdownStyles>;
@@ -988,9 +1129,16 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
-    <Markdown style={styles} rules={rules} markdownit={parser} onLinkPress={onLinkPress}>
+    <MarkdownWithStableRenderer
+      style={styles}
+      rules={rules}
+      markdownit={parser}
+      onLinkPress={onLinkPress}
+      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+    >
       {text}
-    </Markdown>
+    </MarkdownWithStableRenderer>
   );
 });
 
@@ -1004,12 +1152,12 @@ export const AssistantMessage = memo(function AssistantMessage({
   disableOuterSpacing,
   spacing = "default",
 }: AssistantMessageProps) {
-  const { theme, rt } = useUnistyles();
+  const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(
     disableOuterSpacing ?? spacing !== "default",
   );
 
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [rt.themeName]);
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });
@@ -1208,6 +1356,10 @@ export const AssistantMessage = memo(function AssistantMessage({
       testID="assistant-message"
       style={[
         assistantMessageStylesheet.container,
+        (spacing === "compactTop" || spacing === "compactBoth") &&
+          assistantMessageStylesheet.containerCompactTop,
+        (spacing === "compactBottom" || spacing === "compactBoth") &&
+          assistantMessageStylesheet.containerCompactBottom,
         !resolvedDisableOuterSpacing && assistantMessageStylesheet.containerSpacing,
       ]}
     >
@@ -1686,7 +1838,6 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const [labelWidth, setLabelWidth] = useState(0);
   const [secondaryOffsetX, setSecondaryOffsetX] = useState(0);
   const [secondaryWidth, setSecondaryWidth] = useState(0);
-  const shimmerTranslateX = useSharedValue(0);
 
   const totalShimmerChars = label.trim().length + (secondaryLabel?.trim().length ?? 0);
   const shortTextDurationAdjustment = totalShimmerChars <= 12 ? 0.25 : 0;
@@ -1755,28 +1906,6 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }, [isWebShimmer]);
 
   useEffect(() => {
-    if (!isNativeShimmer) {
-      cancelAnimation(shimmerTranslateX);
-      shimmerTranslateX.value = -nativeShimmerPeakWidth;
-      return;
-    }
-    const startPosition = -nativeShimmerPeakWidth;
-    const endPosition = labelRowWidth + nativeShimmerPeakWidth;
-    shimmerTranslateX.value = startPosition;
-    shimmerTranslateX.value = withRepeat(
-      withTiming(endPosition, {
-        duration: shimmerDuration * 1000,
-        easing: Easing.linear,
-      }),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(shimmerTranslateX);
-    };
-  }, [isNativeShimmer, labelRowWidth, nativeShimmerPeakWidth, shimmerDuration, shimmerTranslateX]);
-
-  useEffect(() => {
     if (isNative || !isExpanded || !hasDetailContent) {
       return;
     }
@@ -1799,10 +1928,6 @@ const ExpandableBadge = memo(function ExpandableBadge({
       node.removeEventListener("wheel", stopWheelPropagation);
     };
   }, [hasDetailContent, isExpanded, wheelInvestigationComponentId]);
-
-  const nativeShimmerPeakStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: shimmerTranslateX.value }],
-  }));
 
   const shimmerGradient =
     "linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.45) 24%, #ffffff 40%, #ffffff 60%, rgba(255, 255, 255, 0.45) 76%, rgba(255, 255, 255, 0) 100%)";
@@ -1903,41 +2028,6 @@ const ExpandableBadge = memo(function ExpandableBadge({
     [shimmerSecondaryStyle],
   );
 
-  const nativeShimmerTrackStyle = useMemo(
-    () => [
-      expandableBadgeStylesheet.nativeShimmerTrack,
-      { width: labelRowWidth, height: labelRowHeight },
-    ],
-    [labelRowHeight, labelRowWidth],
-  );
-
-  const nativeShimmerMaskStyle = useMemo(
-    () => [
-      expandableBadgeStylesheet.shimmerMaskRow,
-      { width: labelRowWidth, height: labelRowHeight },
-    ],
-    [labelRowHeight, labelRowWidth],
-  );
-
-  const nativeLabelMaskStyle = useMemo(
-    () => [expandableBadgeStylesheet.label, { color: "#000000", opacity: 1 }],
-    [],
-  );
-
-  const nativeSecondaryMaskStyle = useMemo(
-    () => [expandableBadgeStylesheet.secondaryLabel, { color: "#000000", opacity: 1 }],
-    [],
-  );
-
-  const nativeShimmerPeakCombinedStyle = useMemo(
-    () => [
-      expandableBadgeStylesheet.nativeShimmerPeak,
-      nativeShimmerPeakStyle,
-      { width: nativeShimmerPeakWidth, height: labelRowHeight },
-    ],
-    [labelRowHeight, nativeShimmerPeakStyle, nativeShimmerPeakWidth],
-  );
-
   const chevronStyle = useMemo(
     () => [
       expandableBadgeStylesheet.chevron,
@@ -2019,52 +2109,15 @@ const ExpandableBadge = memo(function ExpandableBadge({
               </View>
             ) : null}
             {isNativeShimmer ? (
-              <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
-                <MaskedView
-                  style={nativeShimmerTrackStyle}
-                  maskElement={
-                    <View style={nativeShimmerMaskStyle}>
-                      <Text style={nativeLabelMaskStyle} numberOfLines={1}>
-                        {label}
-                      </Text>
-                      {secondaryLabel ? (
-                        <Text style={nativeSecondaryMaskStyle} numberOfLines={1}>
-                          {secondaryLabel}
-                        </Text>
-                      ) : (
-                        <View style={expandableBadgeStylesheet.spacer} />
-                      )}
-                    </View>
-                  }
-                >
-                  <View style={nativeShimmerTrackStyle}>
-                    <Animated.View style={nativeShimmerPeakCombinedStyle}>
-                      <Svg width="100%" height="100%" preserveAspectRatio="none">
-                        <Defs>
-                          <SvgLinearGradient
-                            id={nativeGradientIdRef.current}
-                            x1="0%"
-                            y1="0%"
-                            x2="100%"
-                            y2="0%"
-                          >
-                            <Stop offset="0%" stopColor="#ffffff" stopOpacity={0} />
-                            <Stop offset="50%" stopColor="#ffffff" stopOpacity={1} />
-                            <Stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
-                          </SvgLinearGradient>
-                        </Defs>
-                        <Rect
-                          x="0"
-                          y="0"
-                          width="100%"
-                          height="100%"
-                          fill={`url(#${nativeGradientIdRef.current})`}
-                        />
-                      </Svg>
-                    </Animated.View>
-                  </View>
-                </MaskedView>
-              </View>
+              <NativeExpandableBadgeShimmer
+                label={label}
+                secondaryLabel={secondaryLabel}
+                rowWidth={labelRowWidth}
+                rowHeight={labelRowHeight}
+                peakWidth={nativeShimmerPeakWidth}
+                durationSeconds={shimmerDuration}
+                gradientId={nativeGradientIdRef.current}
+              />
             ) : null}
           </View>
           {isInteractive && isHovered ? (
@@ -2097,10 +2150,9 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.isLastInSequence !== next.isLastInSequence) return false;
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.testID !== next.testID) return false;
-  if (Boolean(previous.onToggle) !== Boolean(next.onToggle)) return false;
-  if (previous.isExpanded && previous.renderDetails !== next.renderDetails) {
-    return false;
-  }
+  if (previous.onToggle !== next.onToggle) return false;
+  if (previous.onDetailHoverChange !== next.onDetailHoverChange) return false;
+  if (previous.renderDetails !== next.renderDetails) return false;
   return true;
 }
 

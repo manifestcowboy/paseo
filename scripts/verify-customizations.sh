@@ -35,9 +35,6 @@ for file in "${CUSTOM_FILES[@]}"; do
   fi
 done
 
-check_contains "packages/app/src/components/message.tsx" "AttachmentImagePreviewModal" "message renderer imports lightbox modal"
-check_contains "packages/app/src/components/message.tsx" "setPreviewedImageIndex" "message renderer opens image preview"
-check_contains "packages/app/src/components/attachment-image-preview-modal.tsx" "getOverlayRoot" "lightbox renders via overlay root"
 check_contains "AGENTS.md" "update:upstream:preserve" "agents file documents one-command fork update"
 check_contains "AGENTS.md" "scripts/customization-manifest.sh" "agents file points to canonical customization manifest"
 check_contains "LESSONS.md" "## Our Customizations in This Fork" "lessons file keeps customization playbook"

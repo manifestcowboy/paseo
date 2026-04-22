@@ -30,8 +30,24 @@ This is the normal path. It now:
 3. Verifies the custom code is still present
 4. Rebuilds the current web bundle from this repo
 5. Patches the installed `/Applications/Paseo.app` in place
+6. On macOS, this step is blocked by default because patching a signed app bundle can trip Gatekeeper
 
 No DMG install step is required for routine updates.
+
+## macOS signing note
+
+On macOS, editing files inside `/Applications/Paseo.app` invalidates the app's signature and can leave Finder showing the "damaged" warning even after a local re-sign.
+Because of that, the sync script now refuses to patch the installed app by default on macOS.
+
+The safe path is to keep the installed app immutable and replace it with a fresh signed app build when needed.
+
+If you intentionally want to patch the installed bundle anyway, you must opt in explicitly and provide a local signing identity:
+
+```bash
+PASEO_ALLOW_MAC_APP_PATCH=1 \
+PASEO_MAC_CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" \
+npm run sync:installed:app
+```
 
 ## What gets retained
 
