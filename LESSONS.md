@@ -11,6 +11,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **What went wrong**: An orchestrator posted context mentioning old agent IDs into a room. Paseo tagged those dead agents in the room's mention list. When new agents posted results, the room mixed current and stale agent references, causing confusion about which results were real.
 
 **How to avoid**:
+
 1. When creating a room, post only the objective — no old agent IDs.
 2. When posting to a room, only @mention agents actively spawned for THIS task.
 3. Never use @everyone in rooms that span multiple agent generations.
@@ -26,6 +27,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **What went wrong**: A Gemini Flash agent was asked to test bulk operations. Instead of just reporting failures, it started editing backend source files to "fix" issues it found. The changes were low quality and had to be reverted.
 
 **How to avoid**:
+
 1. Always include "Do NOT edit any files" in test agent prompts.
 2. Test agents run functions, check results, report PASS/FAIL with error details. Zero file edits.
 3. Backend fixes → Codex only. UI fixes → Claude only.
@@ -40,6 +42,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **What went wrong**: Codex agents appeared stalled from low usage. Instead of resuming them, they were replaced, which lost useful context and interrupted ongoing work.
 
 **How to avoid**:
+
 1. When Codex usage drops below 10%, let the external script run first: it switches Codex account, reloads recently active Codex agents in Paseo (last ~10 minutes), and sends a follow-up resume message.
 2. If the agent is still stalled after auto-recovery, run manual recovery with Paseo CLI:
    - `paseo agent reload <id>`
@@ -56,6 +59,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **What went wrong**: An agent was given research + implementation + coding standards cleanup + task file creation in one prompt. Quality suffered across all tasks.
 
 **How to avoid**:
+
 1. Each agent prompt has one verb: "research", "implement", "test", "plan", or "fix".
 2. If a task has multiple phases, use multiple agents or sequential messages to the same agent.
 3. Keep the scope narrow enough that the agent can hold the full context in focus.
@@ -69,6 +73,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **What went wrong**: Launched Gemini Flash with `--mode bypassPermissions` twice. Both times it errored: "Agent not found: bypassPermissions. Available agents: build, design-review, explore, general, plan."
 
 **Correct usage**:
+
 - Claude: `paseo run --mode bypassPermissions --provider claude/opus`
 - Codex: `paseo run --mode full-access --provider codex/gpt-5.4`
 - OpenCode (Gemini/minimax): `paseo run --provider opencode/google/antigravity-gemini-3-flash` (NO --mode flag)
@@ -80,6 +85,7 @@ Durable patterns and rules learned from real orchestration sessions. Read this b
 **Rule**: When running parallel agents, assign non-overlapping file scopes to prevent merge conflicts.
 
 **Example split**:
+
 - Backend agent: `packages/server/`, `packages/cli/`, `packages/relay/` only
 - UI agent: `packages/app/`, `packages/desktop/`, `packages/website/` only
 - Research agent: `docs/`, `LESSONS.md`, `scripts/` only (no source code)
@@ -95,6 +101,7 @@ State this explicitly in each agent's prompt: "Do NOT touch files in X directory
 **What went wrong**: After 20+ hours and 50+ agent spawns, the orchestrator was losing detail from earlier decisions, repeating mistakes (wrong --mode flags, wrong model choices), and the compressed context made it harder to reason about the full project state.
 
 **How to avoid**:
+
 1. Save all durable decisions to memory files (already done)
 2. Update LESSONS.md and changelog before handoff
 3. Create a fresh session with the orchestrator bootstrap prompt
@@ -109,6 +116,7 @@ State this explicitly in each agent's prompt: "Do NOT touch files in X directory
 **What went wrong**: The orchestrator bulk-archived "stale" agents that included the user's personal agent sessions (General Assistance, GAS Manager, etc.). These were not stale — they were the user's ongoing work in other contexts.
 
 **How to avoid**:
+
 1. Before archiving, check who spawned the agent — only archive agents from YOUR session
 2. When cleaning up, filter by agent names you created (e.g., `impl-*`, `plan-*`, `verify-*`, `ui-*`, `audit-*`)
 3. Never archive agents with generic names like "General Assistance" or names you don't recognize
@@ -123,6 +131,7 @@ State this explicitly in each agent's prompt: "Do NOT touch files in X directory
 **What went wrong**: Over a multi-phase overnight sprint, agents reported "PASS" based on `npm run typecheck` and `npm run build` succeeding. The orchestrator then told the user features were "complete" and "verified." When the user actually tested in the browser, many features were broken — translations not showing, tag selectors still plain text, speech generation still failing, etc.
 
 **How to avoid**:
+
 1. "Code done" and "verified working" are two completely different statuses. Use `implemented_not_verified` until browser-tested.
 2. Never tell the user "X is fixed" unless you or an agent actually performed the action in a browser and saw the correct result.
 3. If browser testing is blocked by environment or tooling, say so explicitly — don't report the feature as done.
@@ -136,12 +145,14 @@ State this explicitly in each agent's prompt: "Do NOT touch files in X directory
 **Rule**: Always run `npm run typecheck` and `npm run format:check` locally before pushing after an upstream merge. Never blindly keep HEAD for all conflicts.
 
 **What went wrong**: Syncing upstream/main (v0.1.56) introduced 8+ typecheck failures and 2 format failures that broke CI. Root causes:
+
 1. Keeping our stripped-down `use-settings.ts` blocked the upstream's expanded `AppSettings` type (`ThemeName`, `sendBehavior`) that `settings-screen.tsx` depended on
 2. Keeping the reverted `opencode-agent.ts` left unresolved Promise type errors against updated server types
 3. Two `IS_WEB` / `Platform.OS` references were missed during conflict resolution
 4. Server package `dist/` was stale — `spawnProcess`/`execCommand` were in source but not in compiled types
 
 **How to sync cleanly**:
+
 ```bash
 git fetch upstream
 git merge upstream/main
@@ -154,6 +165,7 @@ git add -A && git commit && git push origin main
 ```
 
 **Conflict resolution heuristics**:
+
 - If upstream changed a **type definition** (e.g. `AppSettings`, `ProviderSnapshotEntry`): take upstream — downstream files will depend on it
 - If upstream changed a **large implementation file** (e.g. `opencode-agent.ts`): take upstream unless you have specific intentional changes to that file
 - If the conflict is in a **file you added** (e.g. `attachment-image-preview-modal.tsx`): take yours
@@ -174,6 +186,7 @@ git add -A && git commit && git push origin main
   - supporting PR notes in `pr-notes/`
 
 **How to keep new customizations persistent**:
+
 1. Add the owned file path(s) to `scripts/customization-manifest.sh`.
 2. Update `CUSTOM_CHANGELOG.md`.
 3. Extend `scripts/verify-customizations.sh` when the customization introduces behavior that should be checked automatically.
@@ -181,10 +194,12 @@ git add -A && git commit && git push origin main
 5. Do not create another maintenance script or duplicate workflow doc unless the current 3-script + 1-manifest structure cannot handle the change cleanly.
 
 **Files that are safe to take 100% from upstream** (no custom changes):
+
 - `opencode-agent.ts` — we reverted a cherry-pick; upstream's full version is correct
 - `settings-screen.tsx`, `_layout.tsx` — no custom changes
 
 **Correction**:
+
 - `use-settings.ts` is not automatically safe to take unchanged from upstream anymore.
 - Upstream validation still needs to be checked against our persistence expectations and tests, especially when upstream expands theme options or adds new settings fields.
 
@@ -197,6 +212,7 @@ git add -A && git commit && git push origin main
 **Symptom**: Typecheck errors like `Module '@getpaseo/server' has no exported member 'spawnProcess'` even though `exports.ts` has the export.
 
 **Fix**:
+
 ```bash
 npm run build --workspace=@getpaseo/server
 npm run typecheck   # should now be clean
@@ -213,12 +229,29 @@ npm run typecheck   # should now be clean
 **What went wrong**: The repo contained the lightbox customization, verification passed, and the fork was on the latest upstream version. But the installed app was still serving an older `app-dist` bundle inside `/Applications/Paseo.app`, so restarting Paseo did not show the customization.
 
 **How to avoid**:
+
 1. Treat repo sync and installed-app sync as two separate steps.
 2. After upstream merge + verification, run the installed-app sync step:
    - `npm run sync:installed:app`
 3. Prefer the one-command path for routine updates:
    - `npm run update:upstream:preserve`
 4. If the app still looks upstream-clean after a restart, compare the installed app bundle timestamps before assuming the code merge failed.
+
+---
+
+## "Latest Version" Needs Binary Replace, Not Only app-dist Sync
+
+**Rule**: If the goal is to update the About dialog version, replace the installed app binary in the same flow. `sync:installed:app` alone is insufficient because it syncs renderer assets only.
+
+**What went wrong**: The update workflow merged upstream and synced app-dist, but `/Applications/Paseo.app` still contained the previous binary version (`0.1.61-beta.1`). The UI content looked updated, but About stayed old, which looked like the update failed.
+
+**One-shot fix**:
+
+```bash
+npm run update:latest:install
+```
+
+**Why this works**: It combines upstream sync + desktop rebuild + app replacement, then verifies the installed `CFBundleShortVersionString`.
 
 ---
 
@@ -229,6 +262,7 @@ npm run typecheck   # should now be clean
 **What went wrong**: A test used `zinc` as the invalid persisted theme. Upstream now accepts `zinc` as a valid theme, so the test was no longer exercising invalid-value recovery and started failing after sync.
 
 **How to avoid**:
+
 1. Check the live enum source before picking an "invalid" fixture.
 2. Prefer obviously invalid sentinel values like `sepia` instead of values that might later become valid product options.
 3. If a sanitization test expects persistence, assert both the returned normalized value and the write-back to storage.
@@ -242,6 +276,7 @@ npm run typecheck   # should now be clean
 **What went wrong**: `loadSettingsFromStorage()` corrected an invalid persisted theme in memory but did not write the corrected value back to `AsyncStorage`. The app test expected sanitization plus persistence, so it failed after the upstream sync.
 
 **How to avoid**:
+
 1. When normalizing stored config, track whether repair happened.
 2. If repair happened, persist the normalized object before returning it.
 3. Keep the default object complete so repaired writes include new upstream fields like `sendBehavior`.
@@ -255,6 +290,7 @@ npm run typecheck   # should now be clean
 **What went wrong**: The failing workspace and terminal specs deep-linked straight into workspace routes. A first attempt to fix them called the storage seeding helper before any navigation, which threw `SecurityError: Failed to read the 'localStorage' property from 'Window'` because the page was still on `about:blank`.
 
 **How to avoid**:
+
 1. Reuse `gotoAppShell(page)` or navigate to `/` before any storage-based seeding helper.
 2. Only deep-link after the app origin has been established and the test daemon registry is seeded.
 3. For direct-route specs, separate "boot app shell safely" from "navigate to target route."
@@ -268,6 +304,7 @@ npm run typecheck   # should now be clean
 **What went wrong**: Five Paseo worktrees accumulated (`paseo`, `paseo-latest-lightbox`, `paseo-lightbox-recover`, `paseo-v053-lightbox`, `paseo-v054-lightbox`) — each with its own `node_modules`. Total waste: ~15 GB.
 
 **How to avoid**:
+
 1. All work happens in `~/paseo` on `main`
 2. If you need an isolated branch for a task: `git worktree add ../paseo-temp feature/xyz`
 3. Remove it when done: `git worktree remove ../paseo-temp`
@@ -282,6 +319,7 @@ npm run typecheck   # should now be clean
 **What went wrong**: User reported Sarah's voice wasn't playing. Orchestrator prompted agent: "fix Sarah voice." Agent fixed voiceId mapping for Sarah. Then Roger broke — same root cause, different voice. Three rounds of back-and-forth, each fixing one voice, when the real issue was voiceId → providerVoiceId resolution for ALL voices.
 
 **How to avoid**:
+
 1. Agent prompts must state the systemic outcome: "Voice playback must work for ANY voice — current and future."
 2. Never scope the expected outcome to a specific instance. Mention instances only as examples of the symptom: "e.g., Sarah is broken, but the fix must work for all voices."
 3. After identifying a bug, grep the codebase for the same pattern in all related files. Fix ALL occurrences in one pass.
@@ -298,6 +336,7 @@ npm run typecheck   # should now be clean
 **What went wrong**: A useMemo dependency bug (player not in deps array) was fixed in the soundscapes table. Two days later, the same bug was found in the affirmation table. Then in the tracks table. Each time a new agent was spawned that had to re-discover the same pattern. Three separate fix rounds for one root cause.
 
 **How to avoid**:
+
 1. After fixing a bug in one component, grep for the same pattern in sibling components.
 2. If a component exists in 4 tables (affirmations, tracks, playlists, soundscapes), the fix applies to all 4 in one commit.
 3. Extract repeated logic into shared functions or hooks to prevent the same bug from recurring in copies.

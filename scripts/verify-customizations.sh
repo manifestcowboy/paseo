@@ -39,12 +39,16 @@ check_contains "AGENTS.md" "update:upstream:preserve" "agents file documents one
 check_contains "AGENTS.md" "scripts/customization-manifest.sh" "agents file points to canonical customization manifest"
 check_contains "LESSONS.md" "## Our Customizations in This Fork" "lessons file keeps customization playbook"
 check_contains "LESSONS.md" "## Installed App Must Be Patched After Upstream Update" "lessons file keeps installed app sync rule"
+check_contains "LESSONS.md" "## \"Latest Version\" Needs Binary Replace, Not Only app-dist Sync" "lessons file keeps app version replacement rule"
 check_contains "LESSONS.md" "## Rebuild Server Dist After Upstream Sync" "lessons file keeps sync rebuild rule"
 check_contains "CUSTOM_CHANGELOG.md" "# CUSTOM_CHANGELOG.md" "custom changelog exists"
 check_contains "CUSTOM_CHANGELOG.md" "## Tracked Customizations" "custom changelog tracks fork scope"
 check_contains "CUSTOM_DESKTOP_WORKFLOW.md" "scripts/customization-manifest.sh" "workflow doc points to canonical customization manifest"
 check_contains "package.json" "\"sync:installed:app\"" "package scripts include installed app sync command"
+check_contains "package.json" "\"update:latest:install\"" "package scripts include one-shot installed version updater"
 check_contains "scripts/sync-installed-app-customizations.sh" "rsync -a --delete" "installed app sync script patches app-dist in place"
+check_contains "scripts/update-upstream-install-app.sh" "npm run build:desktop" "one-shot updater rebuilds desktop app"
+check_contains "scripts/update-upstream-install-app.sh" 'cp -R "\$SOURCE_APP" "\$APP_PATH"' "one-shot updater replaces installed app bundle"
 
 if [[ "$missing" -ne 0 ]]; then
   echo ""

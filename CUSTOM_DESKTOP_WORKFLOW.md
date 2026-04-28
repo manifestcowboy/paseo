@@ -34,6 +34,24 @@ This is the normal path. It now:
 
 No DMG install step is required for routine updates.
 
+## One-shot "actually update app version" flow (macOS)
+
+If you want the installed app binary version in About to change in one run (for example `0.1.61-beta.1` -> `0.1.63`), use:
+
+```bash
+npm run update:latest:install
+```
+
+This command:
+
+1. Installs dev dependencies required by upstream tooling
+2. Syncs fork with upstream while preserving customizations
+3. Builds the desktop app from the updated repo
+4. Replaces `/Applications/Paseo.app` with the freshly built app
+5. Reopens app and prints installed version
+
+Use this instead of `sync:installed:app` when your goal is to update the app version label itself.
+
 ## macOS signing note
 
 On macOS, editing files inside `/Applications/Paseo.app` invalidates the app's signature and can leave Finder showing the "damaged" warning even after a local re-sign.

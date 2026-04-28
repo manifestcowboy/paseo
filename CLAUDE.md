@@ -17,18 +17,18 @@ This is an npm workspace monorepo:
 
 ## Documentation
 
-| Doc                                                  | What's in it                                                                      |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)         | System design, package layering, WebSocket protocol, agent lifecycle, data flow   |
-| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) | Type hygiene, error handling, state design, React patterns, file organization     |
-| [docs/TESTING.md](docs/TESTING.md)                   | TDD workflow, determinism, real dependencies over mocks, test organization        |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP        |
-| [docs/RELEASE.md](docs/RELEASE.md)                   | Release playbook, draft releases, completion checklist                            |
-| [docs/CUSTOM-PROVIDERS.md](docs/CUSTOM-PROVIDERS.md) | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries |
-| [docs/ANDROID.md](docs/ANDROID.md)                   | App variants, local/cloud builds, EAS workflows                                   |
-| [docs/DESIGN.md](docs/DESIGN.md)                     | How to design features before implementation                                      |
-| [SECURITY.md](SECURITY.md)                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                     |
-| [CUSTOM_DESKTOP_WORKFLOW.md](CUSTOM_DESKTOP_WORKFLOW.md) | Fork-only update flow and installed-app customization sync |
+| Doc                                                      | What's in it                                                                      |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)             | System design, package layering, WebSocket protocol, agent lifecycle, data flow   |
+| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md)     | Type hygiene, error handling, state design, React patterns, file organization     |
+| [docs/TESTING.md](docs/TESTING.md)                       | TDD workflow, determinism, real dependencies over mocks, test organization        |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)               | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP        |
+| [docs/RELEASE.md](docs/RELEASE.md)                       | Release playbook, draft releases, completion checklist                            |
+| [docs/CUSTOM-PROVIDERS.md](docs/CUSTOM-PROVIDERS.md)     | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries |
+| [docs/ANDROID.md](docs/ANDROID.md)                       | App variants, local/cloud builds, EAS workflows                                   |
+| [docs/DESIGN.md](docs/DESIGN.md)                         | How to design features before implementation                                      |
+| [SECURITY.md](SECURITY.md)                               | Relay threat model, E2E encryption, DNS rebinding, agent auth                     |
+| [CUSTOM_DESKTOP_WORKFLOW.md](CUSTOM_DESKTOP_WORKFLOW.md) | Fork-only update flow and installed-app customization sync                        |
 
 ## GAS Reference
 

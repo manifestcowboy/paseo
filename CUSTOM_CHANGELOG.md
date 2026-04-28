@@ -18,6 +18,14 @@ This file is intentionally separate from upstream `CHANGELOG.md`.
 - Local maintenance utilities:
   - `scripts/verify-customizations.sh`
   - `scripts/update-upstream-preserve-custom.sh`
+  - `scripts/update-upstream-install-app.sh`
+
+## 2026-04-28 - One-Shot Latest-Version Installer
+
+- Added `scripts/update-upstream-install-app.sh` and npm aliases:
+  - `npm run update:latest:install`
+  - `npm run update:latest:install:no-push`
+- New workflow performs upstream sync + desktop rebuild + `/Applications/Paseo.app` replacement in one command, so About version updates in the same run.
 
 ## 2026-04-17 - Baseline Established
 

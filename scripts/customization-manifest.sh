@@ -18,5 +18,6 @@ CUSTOM_FILES=(
   "scripts/customization-manifest.sh"
   "scripts/verify-customizations.sh"
   "scripts/sync-installed-app-customizations.sh"
+  "scripts/update-upstream-install-app.sh"
   "pr-notes/PR_NOTES_IMAGE_LIGHTBOX_AND_OPENCODE_ANTIGRAVITY.md"
 )

@@ -45,6 +45,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "verify:customizations": "./scripts/verify-customizations.sh",
     "sync:installed:app": "./scripts/sync-installed-app-customizations.sh",
+    "update:latest:install": "./scripts/update-upstream-install-app.sh",
+    "update:latest:install:no-push": "./scripts/update-upstream-install-app.sh --no-push",
     "update:upstream:preserve": "./scripts/update-upstream-preserve-custom.sh",
     "update:upstream:preserve:no-push": "./scripts/update-upstream-preserve-custom.sh --no-push",
     "typecheck:daemon": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",
