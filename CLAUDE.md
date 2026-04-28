@@ -17,17 +17,17 @@ This is an npm workspace monorepo:
 
 ## Documentation
 
-| Doc | What's in it |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, package layering, WebSocket protocol, agent lifecycle, data flow |
-| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) | Type hygiene, error handling, state design, React patterns, file organization |
-| [docs/TESTING.md](docs/TESTING.md) | TDD workflow, determinism, real dependencies over mocks, test organization |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP |
-| [docs/RELEASE.md](docs/RELEASE.md) | Release playbook, draft releases, completion checklist |
+| Doc                                                  | What's in it                                                                      |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)         | System design, package layering, WebSocket protocol, agent lifecycle, data flow   |
+| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) | Type hygiene, error handling, state design, React patterns, file organization     |
+| [docs/TESTING.md](docs/TESTING.md)                   | TDD workflow, determinism, real dependencies over mocks, test organization        |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP        |
+| [docs/RELEASE.md](docs/RELEASE.md)                   | Release playbook, draft releases, completion checklist                            |
 | [docs/CUSTOM-PROVIDERS.md](docs/CUSTOM-PROVIDERS.md) | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries |
-| [docs/ANDROID.md](docs/ANDROID.md) | App variants, local/cloud builds, EAS workflows |
-| [docs/DESIGN.md](docs/DESIGN.md) | How to design features before implementation |
-| [SECURITY.md](SECURITY.md) | Relay threat model, E2E encryption, DNS rebinding, agent auth |
+| [docs/ANDROID.md](docs/ANDROID.md)                   | App variants, local/cloud builds, EAS workflows                                   |
+| [docs/DESIGN.md](docs/DESIGN.md)                     | How to design features before implementation                                      |
+| [SECURITY.md](SECURITY.md)                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                     |
 | [CUSTOM_DESKTOP_WORKFLOW.md](CUSTOM_DESKTOP_WORKFLOW.md) | Fork-only update flow and installed-app customization sync |
 
 ## GAS Reference
@@ -45,6 +45,7 @@ npm run dev                          # Start daemon + Expo in Tmux
 npm run cli -- ls -a -g              # List all agents
 npm run cli -- daemon status         # Check daemon status
 npm run typecheck                    # Always run after changes
+npm run lint                         # Always run after changes
 npm run format                       # Auto-format with Biome
 npm run format:check                 # Check formatting without writing
 ```
@@ -62,8 +63,11 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
   - If you must run a broad suite, pipe output to a file and read it afterward: `npx vitest run <file> --bail=1 > /tmp/test-output.txt 2>&1` then read the file.
   - Never re-run a test suite that another agent already ran and reported green — trust the result.
   - For full suite verification, push to CI and check GitHub Actions instead.
-- **Always run typecheck after every change.**
+- **Always run typecheck and lint after every change.**
 - **Run `npm run format` before committing.** This repo uses Biome for formatting. Do not manually fix formatting — let the formatter handle it.
+- **Always use npm scripts for linting and formatting.** Do not run tools directly with `npx eslint`, `npx oxfmt`, `npx oxlint`, or package-local binaries. For targeted checks, pass file paths through the npm script:
+  - `npm run lint -- packages/app/src/components/message.tsx`
+  - `npm run format:files -- CLAUDE.md packages/app/src/components/message.tsx`
 - **This fork has local customizations.** For routine upstream updates, use `npm run update:upstream:preserve`. If the installed app looks upstream-clean afterward, run `npm run sync:installed:app`.
 - **The canonical preserved customization list lives in `scripts/customization-manifest.sh`.** When you add a new fork-only customization, update that manifest in the same commit.
 - **When adding a new fork-only customization, also update `CUSTOM_CHANGELOG.md` and extend `scripts/verify-customizations.sh` if the behavior needs explicit verification.**
@@ -81,23 +85,23 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 
 ### The four gates
 
-| Gate | Type | When to use |
-|---|---|---|
-| `isWeb` | constant | DOM APIs — `document`, `window`, `<div>`, `addEventListener`, `ResizeObserver`. This is the **exception**, not the default. |
-| `isNative` | constant | Native-only APIs — Haptics, `StatusBar.currentHeight`, push tokens, camera/scanner, `expo-av`. |
-| `getIsElectron()` | cached fn | Desktop wrapper features — file dialogs, titlebar drag region, daemon management, app updates, dock badges. |
-| `useIsCompactFormFactor()` | hook | Layout decisions — sidebar overlay vs pinned, modal vs full screen, single-panel vs split. From `@/constants/layout`. |
+| Gate                       | Type      | When to use                                                                                                                 |
+| -------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `isWeb`                    | constant  | DOM APIs — `document`, `window`, `<div>`, `addEventListener`, `ResizeObserver`. This is the **exception**, not the default. |
+| `isNative`                 | constant  | Native-only APIs — Haptics, `StatusBar.currentHeight`, push tokens, camera/scanner, `expo-av`.                              |
+| `getIsElectron()`          | cached fn | Desktop wrapper features — file dialogs, titlebar drag region, daemon management, app updates, dock badges.                 |
+| `useIsCompactFormFactor()` | hook      | Layout decisions — sidebar overlay vs pinned, modal vs full screen, single-panel vs split. From `@/constants/layout`.       |
 
 ### Decision matrix
 
-| I need to... | Use |
-|---|---|
-| Access DOM (`document`, `window`, `<div>`, `addEventListener`) | `if (isWeb)` |
-| Use a native-only API (Haptics, push tokens, camera) | `if (isNative)` |
-| Use an Electron bridge (file dialog, titlebar, updates) | `if (getIsElectron())` |
-| Switch layout between phone and tablet/desktop | `useIsCompactFormFactor()` |
-| Show something on hover, always-visible on native | `isHovered \|\| isNative \|\| isCompact` (hover only works on web) |
-| Gate to iOS or Android specifically | `Platform.OS === "ios"` / `Platform.OS === "android"` (rare, keep inline) |
+| I need to...                                                   | Use                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Access DOM (`document`, `window`, `<div>`, `addEventListener`) | `if (isWeb)`                                                              |
+| Use a native-only API (Haptics, push tokens, camera)           | `if (isNative)`                                                           |
+| Use an Electron bridge (file dialog, titlebar, updates)        | `if (getIsElectron())`                                                    |
+| Switch layout between phone and tablet/desktop                 | `useIsCompactFormFactor()`                                                |
+| Show something on hover, always-visible on native              | `isHovered \|\| isNative \|\| isCompact` (hover only works on web)        |
+| Gate to iOS or Android specifically                            | `Platform.OS === "ios"` / `Platform.OS === "android"` (rare, keep inline) |
 
 ### Rules
 
@@ -116,6 +120,5 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 - **Import `isWeb`/`isNative` from `@/constants/platform`.** Never write `const isWeb = Platform.OS === "web"` locally.
 
 ## Debugging
-
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
